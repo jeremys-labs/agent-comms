@@ -29,6 +29,41 @@ Runtime wrappers are intentionally not a public package yet. The first extractio
 
 For Discord specifically, the bridge preserves Claude Code's native channel env convention: `DISCORD_BOT_TOKEN`. A fleet that already has Claude Code Discord channels configured can reuse that token environment variable while adding bridge delivery for runtimes that do not have native Discord channel support. Multi-agent-on-one-host setups can still map each bridge binding to a different token env var in config.
 
+## Multiple Agents On One Host
+
+A single-agent setup should use the Claude Code-compatible default:
+
+```bash
+DISCORD_BOT_TOKEN=... agent-discord-bridge
+```
+
+When one bridge process hosts multiple agents at the same time, each Discord agent identity should use its own bot token. The token is the bot identity on the Discord Gateway; separate tokens keep routing, permissions, message authorship, and replies separated by agent.
+
+Use `bindings[]` to map each local agent to the token env var and Discord channel/thread subscriptions it should own:
+
+```json
+{
+  "bindings": [
+    {
+      "name": "marcus",
+      "tokenEnvVar": "MARCUS_DISCORD_BOT_TOKEN",
+      "subscriptions": [
+        { "agentKey": "marcus", "channelId": "1492892431543308439" }
+      ]
+    },
+    {
+      "name": "zara",
+      "tokenEnvVar": "ZARA_DISCORD_BOT_TOKEN",
+      "subscriptions": [
+        { "agentKey": "zara", "channelId": "1492551894214905886" }
+      ]
+    }
+  ]
+}
+```
+
+Those env var names are examples. The public convention remains plain `DISCORD_BOT_TOKEN` for a single agent; multi-agent deployments choose explicit names in config.
+
 ## Who This Is For
 
 - People running Claude Code and Codex together locally.

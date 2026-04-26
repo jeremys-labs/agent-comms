@@ -61,4 +61,37 @@ Then run:
 DISCORD_BOT_TOKEN=... agent-discord-bridge
 ```
 
-For multi-agent-on-one-host deployments, use `bindings[]` to point each binding at whichever token env var you choose. The public default stays compatible with Claude Code's per-agent `DISCORD_BOT_TOKEN` convention.
+## Multiple Agents On One Host
+
+For a single agent, keep the Claude Code-compatible default:
+
+```bash
+DISCORD_BOT_TOKEN=... agent-discord-bridge
+```
+
+For multiple agents hosted by one bridge process, use a distinct Discord bot token for each agent identity. The token is the bot identity on the Discord Gateway; separate tokens keep routing, permissions, message authorship, and replies separated by agent.
+
+Use `bindings[]` to point each agent binding at the token env var and subscriptions it should own:
+
+```json
+{
+  "bindings": [
+    {
+      "name": "marcus",
+      "tokenEnvVar": "MARCUS_DISCORD_BOT_TOKEN",
+      "subscriptions": [
+        { "agentKey": "marcus", "channelId": "1492892431543308439" }
+      ]
+    },
+    {
+      "name": "zara",
+      "tokenEnvVar": "ZARA_DISCORD_BOT_TOKEN",
+      "subscriptions": [
+        { "agentKey": "zara", "channelId": "1492551894214905886" }
+      ]
+    }
+  ]
+}
+```
+
+Those env var names are examples. The public default stays compatible with Claude Code's per-agent `DISCORD_BOT_TOKEN` convention.
