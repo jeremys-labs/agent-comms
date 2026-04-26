@@ -2,21 +2,21 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadCodexBridgeConfig, normalizeCodexBridgeBindings } from './bridge-config.js';
+import { loadDiscordBridgeConfig, normalizeDiscordBridgeBindings } from './bridge-config.js';
 
-describe('loadCodexBridgeConfig', () => {
+describe('loadDiscordBridgeConfig', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-bridge-config-'));
-    delete process.env.CODEX_BRIDGE_AGENT_KEY;
-    delete process.env.CODEX_BRIDGE_DISCORD_STATE_DIR;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'discord-bridge-config-'));
+    delete process.env.DISCORD_BRIDGE_AGENT_KEY;
+    delete process.env.DISCORD_BRIDGE_STATE_DIR;
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    delete process.env.CODEX_BRIDGE_AGENT_KEY;
-    delete process.env.CODEX_BRIDGE_DISCORD_STATE_DIR;
+    delete process.env.DISCORD_BRIDGE_AGENT_KEY;
+    delete process.env.DISCORD_BRIDGE_STATE_DIR;
   });
 
   it('loads explicit bridge config json when present', () => {
@@ -28,12 +28,12 @@ describe('loadCodexBridgeConfig', () => {
       }),
     );
 
-    const config = loadCodexBridgeConfig(tmpDir);
+    const config = loadDiscordBridgeConfig(tmpDir);
     expect(config?.subscriptions[0]?.agentKey).toBe('zara');
   });
 
   it('normalizes a multi-binding config without collapsing bindings', () => {
-    const bindings = normalizeCodexBridgeBindings({
+    const bindings = normalizeDiscordBridgeBindings({
       bindings: [
         {
           name: 'zara',
@@ -65,10 +65,10 @@ describe('loadCodexBridgeConfig', () => {
       }),
     );
 
-    process.env.CODEX_BRIDGE_AGENT_KEY = 'zara';
-    process.env.CODEX_BRIDGE_DISCORD_STATE_DIR = discordStateDir;
+    process.env.DISCORD_BRIDGE_AGENT_KEY = 'zara';
+    process.env.DISCORD_BRIDGE_STATE_DIR = discordStateDir;
 
-    const config = loadCodexBridgeConfig(tmpDir);
+    const config = loadDiscordBridgeConfig(tmpDir);
     expect(config?.subscriptions).toEqual([
       { agentKey: 'zara', channelId: '1492551894214905886' },
     ]);

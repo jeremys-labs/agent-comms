@@ -1,22 +1,22 @@
-export interface CodexBridgeSubscription {
+export interface DiscordBridgeSubscription {
   agentKey: string;
   channelId: string;
   threadId?: string;
   workspaceDir?: string;
 }
 
-export interface CodexBridgeConfig {
-  bindings?: CodexBridgeBinding[];
+export interface DiscordBridgeConfig {
+  bindings?: DiscordBridgeBinding[];
   tokenEnvVar?: string;
   selfUserId?: string;
-  subscriptions: CodexBridgeSubscription[];
+  subscriptions: DiscordBridgeSubscription[];
 }
 
-export interface CodexBridgeBinding {
+export interface DiscordBridgeBinding {
   name: string;
   tokenEnvVar: string;
   selfUserId?: string;
-  subscriptions: CodexBridgeSubscription[];
+  subscriptions: DiscordBridgeSubscription[];
 }
 
 export interface DiscordMessageEvent {
@@ -39,7 +39,7 @@ export interface DiscordMessageEvent {
   } | null;
 }
 
-export interface CodexBridgeInboxEntry {
+export interface DiscordBridgeInboxEntry {
   id: string;
   bindingName?: string;
   agentKey: string;

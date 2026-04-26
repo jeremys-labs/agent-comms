@@ -4,11 +4,11 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { appendInboxEntry, hasSeen, markSeen, readBridgeState } from './bridge-store.js';
 
-describe('codex bridge store', () => {
+describe('discord bridge store', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-bridge-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'discord-bridge-'));
   });
 
   afterEach(() => {

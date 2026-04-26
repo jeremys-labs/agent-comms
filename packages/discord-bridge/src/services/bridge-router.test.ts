@@ -9,7 +9,7 @@ const config = {
   ],
 };
 
-describe('codex bridge router', () => {
+describe('discord bridge router', () => {
   it('routes a channel message to the matching agent', () => {
     const routed = routeDiscordMessage(config as any, {
       id: 'm1',

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { CodexBridgeInboxEntry } from '../types/bridge.js';
+import type { DiscordBridgeInboxEntry } from '../types/bridge.js';
 
 interface BridgeState {
   lastSeenMessageIds: Record<string, string>;
@@ -39,7 +39,7 @@ export function hasSeen(contentRoot: string, subscriptionKey: string, messageId:
   return current.lastSeenMessageIds[subscriptionKey] === messageId;
 }
 
-export function appendInboxEntry(contentRoot: string, entry: CodexBridgeInboxEntry): string {
+export function appendInboxEntry(contentRoot: string, entry: DiscordBridgeInboxEntry): string {
   ensureDir(inboxDir(contentRoot));
   const filePath = path.join(inboxDir(contentRoot), `${entry.agentKey}.jsonl`);
   fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { resolveContentRoot, ensureBridgeDirs } from './paths.js';
-import { loadCodexBridgeConfig, normalizeCodexBridgeBindings } from './bridge-config.js';
+import { loadDiscordBridgeConfig, normalizeDiscordBridgeBindings } from './bridge-config.js';
 import { DiscordGatewayClient } from './services/discord-gateway-client.js';
 import { appendInboxEntry, hasSeen, markSeen } from './services/bridge-store.js';
 import { routeDiscordMessageForBinding } from './services/bridge-router.js';
@@ -8,13 +8,13 @@ import { routeDiscordMessageForBinding } from './services/bridge-router.js';
 const contentRoot = resolveContentRoot();
 ensureBridgeDirs(contentRoot);
 
-const config = loadCodexBridgeConfig(contentRoot);
+const config = loadDiscordBridgeConfig(contentRoot);
 if (!config) {
   console.error('[discord-bridge] missing config file at bridge/discord.json');
   process.exit(1);
 }
 
-const bindings = normalizeCodexBridgeBindings(config);
+const bindings = normalizeDiscordBridgeBindings(config);
 const clients: DiscordGatewayClient[] = [];
 
 for (const binding of bindings) {

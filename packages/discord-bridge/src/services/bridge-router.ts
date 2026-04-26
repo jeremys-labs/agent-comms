@@ -1,13 +1,13 @@
 import type {
-  CodexBridgeBinding,
-  CodexBridgeConfig,
-  CodexBridgeInboxEntry,
-  CodexBridgeSubscription,
+  DiscordBridgeBinding,
+  DiscordBridgeConfig,
+  DiscordBridgeInboxEntry,
+  DiscordBridgeSubscription,
   DiscordMessageEvent,
 } from '../types/bridge.js';
 
 export function matchesSubscription(
-  subscription: CodexBridgeSubscription,
+  subscription: DiscordBridgeSubscription,
   event: DiscordMessageEvent,
 ): boolean {
   if (subscription.threadId) {
@@ -17,7 +17,7 @@ export function matchesSubscription(
 }
 
 export function shouldIgnoreDiscordMessage(
-  config: CodexBridgeConfig,
+  config: DiscordBridgeConfig,
   event: DiscordMessageEvent,
 ): boolean {
   if (!event.content?.trim()) return true;
@@ -27,9 +27,9 @@ export function shouldIgnoreDiscordMessage(
 }
 
 export function routeDiscordMessage(
-  config: CodexBridgeConfig,
+  config: DiscordBridgeConfig,
   event: DiscordMessageEvent,
-): CodexBridgeInboxEntry | null {
+): DiscordBridgeInboxEntry | null {
   if (shouldIgnoreDiscordMessage(config, event)) return null;
 
   const subscription = config.subscriptions.find((item) => matchesSubscription(item, event));
@@ -48,10 +48,10 @@ export function routeDiscordMessage(
 }
 
 export function routeDiscordMessageForBinding(
-  binding: CodexBridgeBinding,
+  binding: DiscordBridgeBinding,
   event: DiscordMessageEvent,
-): CodexBridgeInboxEntry | null {
-  const scopedConfig: CodexBridgeConfig = {
+): DiscordBridgeInboxEntry | null {
+  const scopedConfig: DiscordBridgeConfig = {
     tokenEnvVar: binding.tokenEnvVar,
     selfUserId: binding.selfUserId,
     subscriptions: binding.subscriptions,
