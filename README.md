@@ -19,13 +19,15 @@ Existing options tend to be either runtime-specific or framework-heavy. Claude h
 ## What's In The Box
 
 - `@agent-comms/mailbox`: a durable SQLite mailbox with message threads, lifecycle events, a CLI, and a library API.
-- `@agent-comms/discord-bridge`: a Discord Gateway bridge that routes Discord messages into local agent inbox files.
+- `@agent-comms/discord-bridge`: a Discord Gateway bridge that routes Discord messages into local agent inbox files. It is drop-in compatible with Claude Code's native Discord channel configuration: use the same `DISCORD_BOT_TOKEN_<AGENT_NAME>` env var convention, so existing Claude Code Discord setups can adopt the bridge without reconfiguring bot tokens.
 
 Runtime wrappers are intentionally not a public package yet. The first extraction keeps runtime-specific PTY shims in the consuming app until the mailbox and bridge APIs settle.
 
 ## Adapters / Runtime Support
 
 `agent-comms` is runtime-neutral, but it was built against Claude Code and Codex running side-by-side. Runtime adapters are thin shims that watch mailbox or bridge inbox state, convert events into structured prompts, inject them into the local runtime, and acknowledge delivery after successful injection. To add another runtime, implement that same adapter boundary: read the primitive state, format the event for the runtime, deliver it, then mark progress durably.
+
+For Discord specifically, the bridge preserves Claude Code's native channel env convention: `DISCORD_BOT_TOKEN_<AGENT_NAME>`. A fleet that already has Claude Code Discord channels configured can reuse those token names while adding bridge delivery for runtimes that do not have native Discord channel support.
 
 ## Who This Is For
 
