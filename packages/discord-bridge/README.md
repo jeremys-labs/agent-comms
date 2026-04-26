@@ -42,7 +42,7 @@ Example:
   "bindings": [
     {
       "name": "marcus",
-      "tokenEnvVar": "DISCORD_BOT_TOKEN_MARCUS",
+          "tokenEnvVar": "DISCORD_BOT_TOKEN",
       "selfUserId": "123456789012345678",
       "subscriptions": [
         {
@@ -58,5 +58,7 @@ Example:
 Then run:
 
 ```bash
-DISCORD_BOT_TOKEN_MARCUS=... agent-discord-bridge
+DISCORD_BOT_TOKEN=... agent-discord-bridge
 ```
+
+For multi-agent-on-one-host deployments, use `bindings[]` to point each binding at whichever token env var you choose. The public default stays compatible with Claude Code's per-agent `DISCORD_BOT_TOKEN` convention.
