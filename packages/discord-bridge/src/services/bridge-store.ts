@@ -34,6 +34,10 @@ export function markSeen(contentRoot: string, subscriptionKey: string, messageId
   fs.writeFileSync(statePath(contentRoot), JSON.stringify(current, null, 2));
 }
 
+export function getLastSeen(contentRoot: string, subscriptionKey: string): string | undefined {
+  return readBridgeState(contentRoot).lastSeenMessageIds[subscriptionKey];
+}
+
 export function hasSeen(contentRoot: string, subscriptionKey: string, messageId: string): boolean {
   const current = readBridgeState(contentRoot);
   return current.lastSeenMessageIds[subscriptionKey] === messageId;
