@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import Database from 'better-sqlite3';
 
-export const AGENT_MAIL_DIR = process.env.AGENT_MAIL_DIR ?? path.join(os.homedir(), '.agent-comms', 'mailbox');
+export const DEFAULT_AGENT_MAIL_DIR = path.join(os.homedir(), '.agent-comms', 'mailbox');
 
 export type AgentMailType = 'question' | 'decision_request' | 'handoff' | 'status' | 'artifact' | 'note';
 export type AgentMailPriority = 'low' | 'normal' | 'high';
@@ -112,7 +112,7 @@ function ensureDir(dirPath: string): void {
 }
 
 export function resolveAgentMailDir(): string {
-  return AGENT_MAIL_DIR;
+  return process.env.AGENT_MAIL_DIR ?? DEFAULT_AGENT_MAIL_DIR;
 }
 
 export function resolveAgentMailDbPath(baseDir = resolveAgentMailDir()): string {
@@ -327,6 +327,8 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
     },
 
     closeMessage(actorAgent, messageId) {
+      // Lifecycle side effects such as Open Brain raw_capture cleanup belong
+      // in the mcc-tmux wrapper/CLI. This package remains a storage primitive.
       const now = new Date().toISOString();
       const result = updateClose.run(now, messageId, actorAgent);
       if (result.changes === 0) throw new Error(`Message not found for agent ${actorAgent}: ${messageId}`);

@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createAgentMailStore, formatAgentMailForRuntime } from './index.js';
+import { createAgentMailStore, formatAgentMailForRuntime, resolveAgentMailDir } from './index.js';
 
 describe('agent mail', () => {
   let tmpDir: string;
@@ -14,7 +14,14 @@ describe('agent mail', () => {
   });
 
   afterEach(() => {
+    delete process.env.AGENT_MAIL_DIR;
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('resolves AGENT_MAIL_DIR at call time', () => {
+    process.env.AGENT_MAIL_DIR = tmpDir;
+
+    expect(resolveAgentMailDir()).toBe(tmpDir);
   });
 
   it('sends, acknowledges, replies to, and closes agent mail', () => {
