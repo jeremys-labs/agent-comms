@@ -3,6 +3,7 @@ export interface DiscordBridgeSubscription {
   channelId: string;
   threadId?: string;
   workspaceDir?: string;
+  allowBotIds?: string[];
 }
 
 export interface DiscordBridgeConfig {
