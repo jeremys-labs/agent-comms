@@ -6,6 +6,7 @@ const DISCORD_API_BASE = 'https://discord.com/api/v10';
 
 export interface BackfillResult {
   queued: number;
+  agents: string[];
 }
 
 export function subscriptionKey(binding: DiscordBridgeBinding, entry: Pick<DiscordBridgeInboxEntry, 'agentKey' | 'channelId' | 'threadId'>): string {
@@ -54,6 +55,7 @@ async function fetchMessagesAfter(token: string, channelId: string, after: strin
 
 export async function backfillBindingMessages(contentRoot: string, binding: DiscordBridgeBinding, token: string): Promise<BackfillResult> {
   let queued = 0;
+  const agents = new Set<string>();
 
   for (const subscription of uniqueSubscriptions(binding.subscriptions)) {
     const channelId = subscription.threadId ?? subscription.channelId;
@@ -74,8 +76,9 @@ export async function backfillBindingMessages(contentRoot: string, binding: Disc
       appendInboxEntry(contentRoot, routed);
       markSeen(contentRoot, routedKey, routed.id);
       queued += 1;
+      agents.add(routed.agentKey);
     }
   }
 
-  return { queued };
+  return { queued, agents: [...agents].sort() };
 }

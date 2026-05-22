@@ -29,7 +29,8 @@ export class DiscordGatewayClient {
 
   connect(): void {
     this.clearReconnectTimer();
-    this.ws = new WebSocket(GATEWAY_URL);
+    const localAddress = process.env.DISCORD_BRIDGE_LOCAL_ADDRESS;
+    this.ws = new WebSocket(GATEWAY_URL, localAddress ? { localAddress } : undefined);
     this.ws.on('message', (raw) => this.handlePayload(JSON.parse(raw.toString()) as GatewayPayload));
     this.ws.on('close', () => {
       this.cleanup();

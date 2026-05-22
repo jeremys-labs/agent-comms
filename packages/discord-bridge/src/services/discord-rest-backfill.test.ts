@@ -38,6 +38,7 @@ describe('discord REST backfill', () => {
     const result = await backfillBindingMessages(tmpDir, binding, 'token');
 
     expect(result.queued).toBe(2);
+    expect(result.agents).toEqual(['eli']);
     const lines = fs.readFileSync(path.join(tmpDir, 'bridge', 'inbox', 'eli.jsonl'), 'utf8').trim().split('\n');
     expect(lines.map((line) => JSON.parse(line).id)).toEqual(['101', '102']);
     expect(readBridgeState(tmpDir).lastSeenMessageIds['eli:eli:c1']).toBe('102');
@@ -50,6 +51,7 @@ describe('discord REST backfill', () => {
     const result = await backfillBindingMessages(tmpDir, binding, 'token');
 
     expect(result.queued).toBe(0);
+    expect(result.agents).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
