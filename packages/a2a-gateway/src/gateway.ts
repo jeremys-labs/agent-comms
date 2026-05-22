@@ -2,9 +2,11 @@
 import http from 'http';
 import { buildAgentCard, findAgent, handleA2ARequest } from './a2a.js';
 import { loadA2AGatewayConfig } from './config.js';
+import { createOpenBrainA2ALogger } from './open-brain.js';
 import type { JsonRpcRequest } from './types.js';
 
 const config = loadA2AGatewayConfig();
+const conversationLogger = createOpenBrainA2ALogger();
 
 function json(res: http.ServerResponse, status: number, value: unknown): void {
   const body = JSON.stringify(value, null, 2);
@@ -61,7 +63,7 @@ const server = http.createServer(async (req, res) => {
       if (!authorized(req)) return json(res, 401, { error: 'Unauthorized' });
       const agentKey = decodeURIComponent(rpcMatch[1]!);
       const request = JSON.parse(await readBody(req)) as JsonRpcRequest;
-      return json(res, 200, handleA2ARequest(agentKey, request, { config }));
+      return json(res, 200, handleA2ARequest(agentKey, request, { config, conversationLogger }));
     }
 
     return json(res, 404, { error: 'Not found' });
@@ -76,4 +78,3 @@ server.listen(config.port, config.host, () => {
     console.log(`[a2a-gateway] ${agent.key} card: ${config.baseUrl}/agents/${agent.key}/.well-known/agent-card.json`);
   }
 });
-

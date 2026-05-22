@@ -1,4 +1,4 @@
-import { createAgentMailStore, type AgentMailStore } from '@agent-comms/mailbox';
+import { createAgentMailStore, type AgentMailMessage, type AgentMailStore } from '@agent-comms/mailbox';
 import type {
   A2AGatewayAgent,
   A2AGatewayConfig,
@@ -7,6 +7,7 @@ import type {
   JsonRpcResponse,
 } from './types.js';
 import { A2ATaskStore } from './store.js';
+import type { A2AConversationLogger } from './open-brain.js';
 
 function createTaskId(): string {
   return `a2a_${Math.random().toString(36).slice(2, 10)}`;
@@ -113,27 +114,31 @@ function refreshTaskFromAgentMail(
   task: A2ATaskRecord,
   mailStore: AgentMailStore,
   taskStore: A2ATaskStore,
-): A2ATaskRecord {
-  if (task.state === 'completed' || task.state === 'failed' || task.state === 'canceled') return task;
+): { task: A2ATaskRecord; completed: boolean } {
+  if (task.state === 'completed' || task.state === 'failed' || task.state === 'canceled') {
+    return { task, completed: false };
+  }
   const thread = mailStore.getThread(task.correlationId);
   const reply = thread.find((message) => (
     message.id !== task.messageId
     && message.fromAgent === task.agentKey
     && message.toAgent === `a2a:${task.remoteAgent}`
   ));
-  if (!reply) return task;
-  return taskStore.update({
+  if (!reply) return { task, completed: false };
+  const updated = taskStore.update({
     ...task,
     state: 'completed',
     responseMessageId: reply.id,
     responseText: reply.bodyMd,
   });
+  return { task: updated, completed: true };
 }
 
 export interface A2AHandlerDeps {
   config: A2AGatewayConfig;
   taskStore?: A2ATaskStore;
   mailStore?: AgentMailStore;
+  conversationLogger?: A2AConversationLogger;
 }
 
 export function handleA2ARequest(
@@ -154,7 +159,8 @@ export function handleA2ARequest(
     const task = taskStore.get(taskId);
     if (!task) return { jsonrpc: '2.0', id, error: { code: -32001, message: `Task not found: ${taskId}` } };
     const mailStore = deps.mailStore ?? createAgentMailStore();
-    const refreshed = refreshTaskFromAgentMail(task, mailStore, taskStore);
+    const { task: refreshed, completed } = refreshTaskFromAgentMail(task, mailStore, taskStore);
+    if (completed) deps.conversationLogger?.captureCompletion(refreshed);
     return { jsonrpc: '2.0', id, result: taskResult(refreshed) };
   }
 
@@ -203,5 +209,6 @@ export function handleA2ARequest(
     updatedAt: now,
   };
   taskStore.append(record);
+  deps.conversationLogger?.captureInbound(record, mail as AgentMailMessage);
   return { jsonrpc: '2.0', id, result: taskResult(record) };
 }

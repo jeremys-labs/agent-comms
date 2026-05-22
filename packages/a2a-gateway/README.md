@@ -58,3 +58,15 @@ Supported JSON-RPC methods:
   agent replies to the generated `agent-mail` thread
 
 This first slice is polling-only: no streaming and no push notifications.
+
+## Open Brain Capture
+
+The gateway logs A2A conversations to OB1 using each target agent's
+`.open-brain/memory.env` key:
+
+- inbound external tasks are captured as `raw_capture` with `project=external-a2a`
+- local agent replies are captured as `private_agent` context with
+  `project=external-a2a`
+
+Capture is non-blocking. A failed OB1 write is logged to stderr but does not
+reject the A2A request.

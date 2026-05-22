@@ -6,6 +6,7 @@ import { createAgentMailStore, type AgentMailStore } from '@agent-comms/mailbox'
 import { buildAgentCard, extractMessageText, handleA2ARequest } from './a2a.js';
 import { loadA2AGatewayConfig } from './config.js';
 import { A2ATaskStore } from './store.js';
+import type { A2AConversationLogger } from './open-brain.js';
 
 describe('a2a gateway', () => {
   let tmpDir: string;
@@ -66,6 +67,30 @@ describe('a2a gateway', () => {
     expect(inbox[0]?.bodyMd).toContain('Check FrontDesk health.');
   });
 
+  it('logs inbound A2A messages through the conversation logger', () => {
+    const config = loadA2AGatewayConfig({ A2A_GATEWAY_BASE_URL: 'https://agents.example.test' });
+    const captured: Array<{ id: string; mailId: string }> = [];
+    const conversationLogger: A2AConversationLogger = {
+      captureInbound(record, mail) {
+        captured.push({ id: record.id, mailId: mail.id });
+      },
+      captureCompletion() {},
+    };
+
+    const response = handleA2ARequest('zara', {
+      jsonrpc: '2.0',
+      id: 'req-1',
+      method: 'message/send',
+      params: {
+        metadata: { remoteAgent: 'tom-agent' },
+        message: { parts: [{ kind: 'text', text: 'Check FrontDesk health.' }] },
+      },
+    }, { config, mailStore, taskStore, conversationLogger });
+
+    const result = response.result as { id: string; metadata: { agentMailMessageId: string } };
+    expect(captured).toEqual([{ id: result.id, mailId: result.metadata.agentMailMessageId }]);
+  });
+
   it('returns tasks/get status for submitted tasks', () => {
     const config = loadA2AGatewayConfig({ A2A_GATEWAY_BASE_URL: 'https://agents.example.test' });
     const sent = handleA2ARequest('hercule', {
@@ -123,5 +148,38 @@ describe('a2a gateway', () => {
       },
     });
     expect(taskStore.get(result.id)?.state).toBe('completed');
+  });
+
+  it('logs completed A2A tasks through the conversation logger', () => {
+    const config = loadA2AGatewayConfig({ A2A_GATEWAY_BASE_URL: 'https://agents.example.test' });
+    const completed: string[] = [];
+    const conversationLogger: A2AConversationLogger = {
+      captureInbound() {},
+      captureCompletion(record) {
+        completed.push(`${record.id}:${record.responseText}`);
+      },
+    };
+    const sent = handleA2ARequest('isla', {
+      jsonrpc: '2.0',
+      id: 'req-1',
+      method: 'message/send',
+      params: { message: { parts: [{ kind: 'text', text: 'Summarize status.' }] } },
+    }, { config, mailStore, taskStore });
+    const result = sent.result as { id: string; metadata: { agentMailMessageId: string } };
+
+    mailStore.reply({
+      actorAgent: 'isla',
+      messageId: result.metadata.agentMailMessageId,
+      bodyMd: 'Status is green.',
+    });
+
+    handleA2ARequest('isla', {
+      jsonrpc: '2.0',
+      id: 'req-2',
+      method: 'tasks/get',
+      params: { id: result.id },
+    }, { config, mailStore, taskStore, conversationLogger });
+
+    expect(completed).toEqual([`${result.id}:Status is green.`]);
   });
 });
