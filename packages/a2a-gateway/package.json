@@ -1,0 +1,35 @@
+{
+  "name": "@agent-comms/a2a-gateway",
+  "version": "0.0.0",
+  "description": "A2A gateway for routing external agent tasks into local durable agent mail.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "agent-a2a-gateway": "./dist/gateway.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "gateway": "tsx src/gateway.ts"
+  },
+  "dependencies": {
+    "@agent-comms/mailbox": "file:../mailbox"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}
