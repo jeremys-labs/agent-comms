@@ -21,6 +21,21 @@ AGENT_MAIL_DIR=/Volumes/Repo-Drive/agents/SHARED/agent-mail \
 npm run gateway --workspace=@agent-comms/a2a-gateway
 ```
 
+For launchd, write secrets and public URL to:
+
+```text
+/Users/jeremylahners/.agent-comms/a2a-gateway/env
+```
+
+Then load:
+
+```bash
+cp deploy/launchd/com.jeremylahners.agent-comms-a2a-gateway.plist \
+  ~/Library/LaunchAgents/
+launchctl bootstrap "gui/$(id -u)" \
+  ~/Library/LaunchAgents/com.jeremylahners.agent-comms-a2a-gateway.plist
+```
+
 Useful environment:
 
 - `A2A_GATEWAY_HOST` defaults to `127.0.0.1`
