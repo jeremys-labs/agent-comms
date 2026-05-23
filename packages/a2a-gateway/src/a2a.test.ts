@@ -7,6 +7,7 @@ import { buildAgentCard, extractMessageText, handleA2ARequest } from './a2a.js';
 import { loadA2AGatewayConfig } from './config.js';
 import { A2ATaskStore } from './store.js';
 import type { A2AConversationLogger } from './open-brain.js';
+import { buildA2AStatusReport, formatA2AStatusReport } from './status.js';
 
 describe('a2a gateway', () => {
   let tmpDir: string;
@@ -65,6 +66,31 @@ describe('a2a gateway', () => {
     expect(inbox).toHaveLength(1);
     expect(inbox[0]?.fromAgent).toBe('a2a:tom-agent');
     expect(inbox[0]?.bodyMd).toContain('Check FrontDesk health.');
+  });
+
+  it('lists latest unique A2A tasks for status checks', () => {
+    const config = loadA2AGatewayConfig({ A2A_GATEWAY_BASE_URL: 'https://agents.example.test' });
+    const sent = handleA2ARequest('zara', {
+      jsonrpc: '2.0',
+      id: 'req-1',
+      method: 'message/send',
+      params: {
+        metadata: { remoteAgent: 'tom-agent' },
+        message: { parts: [{ kind: 'text', text: 'Check FrontDesk health.' }] },
+      },
+    }, { config, mailStore, taskStore });
+    const taskId = (sent.result as { id: string }).id;
+
+    taskStore.updateState(taskId, 'working');
+    const report = buildA2AStatusReport({ agent: 'zara', limit: 5, json: false }, taskStore);
+
+    expect(report).toMatchObject({
+      uniqueTaskCount: 1,
+      counts: { working: 1 },
+    });
+    const tasks = report.tasks as Array<{ id: string; state: string }>;
+    expect(tasks).toEqual([{ ...taskStore.get(taskId), state: 'working' }]);
+    expect(formatA2AStatusReport(report)).toContain(`[working] tom-agent -> zara`);
   });
 
   it('logs inbound A2A messages through the conversation logger', () => {

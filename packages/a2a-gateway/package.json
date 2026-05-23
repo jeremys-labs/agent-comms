@@ -12,7 +12,8 @@
     }
   },
   "bin": {
-    "agent-a2a-gateway": "./dist/gateway.js"
+    "agent-a2a-gateway": "./dist/gateway.js",
+    "agent-a2a-status": "./dist/status.js"
   },
   "files": [
     "dist",
@@ -22,7 +23,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "gateway": "tsx src/gateway.ts"
+    "gateway": "tsx src/gateway.ts",
+    "status": "tsx src/status.ts"
   },
   "dependencies": {
     "@agent-comms/mailbox": "file:../mailbox"

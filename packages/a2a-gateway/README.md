@@ -21,6 +21,13 @@ AGENT_MAIL_DIR=/Volumes/Repo-Drive/agents/SHARED/agent-mail \
 npm run gateway --workspace=@agent-comms/a2a-gateway
 ```
 
+Check the local task ledger:
+
+```bash
+npm run status --workspace=@agent-comms/a2a-gateway -- --limit 20
+npm run status --workspace=@agent-comms/a2a-gateway -- --agent zara --state submitted --json
+```
+
 For launchd, write secrets and public URL to:
 
 ```text
