@@ -1,6 +1,7 @@
 import type { DiscordBridgeBinding, DiscordBridgeInboxEntry, DiscordBridgeSubscription, DiscordMessageEvent } from '../types/bridge.js';
 import { getLastSeen, hasSeen, markSeen, appendInboxEntry } from './bridge-store.js';
 import { routeDiscordMessageForBinding } from './bridge-router.js';
+import { captureKnowledgeGapReply } from './knowledge-gap-capture.js';
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 
@@ -74,6 +75,7 @@ export async function backfillBindingMessages(contentRoot: string, binding: Disc
       if (hasSeen(contentRoot, routedKey, routed.id)) continue;
 
       appendInboxEntry(contentRoot, routed);
+      captureKnowledgeGapReply(routed);
       markSeen(contentRoot, routedKey, routed.id);
       queued += 1;
       agents.add(routed.agentKey);

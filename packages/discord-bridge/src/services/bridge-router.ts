@@ -43,6 +43,7 @@ export function routeDiscordMessage(
     threadId: subscription.threadId,
     author: event.author?.username ?? 'unknown',
     authorId: event.author?.id,
+    referencedMessageId: event.referenced_message?.id,
     content: event.content,
     timestamp: event.timestamp ?? new Date().toISOString(),
   };

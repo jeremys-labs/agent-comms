@@ -10,6 +10,7 @@ import { appendInboxEntry, hasSeen, markSeen } from './services/bridge-store.js'
 import { routeDiscordMessageForBinding } from './services/bridge-router.js';
 import { backfillBindingMessages, subscriptionKey } from './services/discord-rest-backfill.js';
 import { wakeAgentRuntime } from './services/runtime-wake.js';
+import { captureKnowledgeGapReply } from './services/knowledge-gap-capture.js';
 
 const contentRoot = resolveContentRoot();
 ensureBridgeDirs(contentRoot);
@@ -257,6 +258,10 @@ for (const binding of bindings) {
     if (hasSeen(contentRoot, key, routed.id)) return;
 
     const filePath = appendInboxEntry(contentRoot, routed);
+    const capture = captureKnowledgeGapReply(routed);
+    if (capture.captured) {
+      console.log(`[discord-bridge] [${binding.name}] captured knowledge-gap reply ${routed.id}`);
+    }
     markSeen(contentRoot, key, routed.id);
     console.log(`[discord-bridge] [${binding.name}] queued ${routed.id} for ${routed.agentKey} -> ${filePath}`);
     const wake = wakeAgentRuntime(routed.agentKey);

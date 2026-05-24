@@ -104,4 +104,16 @@ describe('discord bridge router', () => {
     expect(routed?.bindingName).toBe('zara');
     expect(routed?.agentKey).toBe('zara');
   });
+
+  it('preserves referenced message metadata for downstream reply capture', () => {
+    const routed = routeDiscordMessage(config as any, {
+      id: 'm8',
+      channel_id: '1492892431543308439',
+      content: 'reply body',
+      author: { id: 'user1', username: 'Jeremy' },
+      referenced_message: { id: 'question-1' },
+    });
+
+    expect(routed?.referencedMessageId).toBe('question-1');
+  });
 });

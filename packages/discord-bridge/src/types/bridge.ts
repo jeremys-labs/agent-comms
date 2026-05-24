@@ -48,6 +48,7 @@ export interface DiscordBridgeInboxEntry {
   threadId?: string;
   author: string;
   authorId?: string;
+  referencedMessageId?: string;
   content: string;
   timestamp: string;
 }
