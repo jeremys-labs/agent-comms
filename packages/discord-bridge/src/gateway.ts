@@ -11,9 +11,11 @@ import { routeDiscordMessageForBinding } from './services/bridge-router.js';
 import { backfillBindingMessages, subscriptionKey } from './services/discord-rest-backfill.js';
 import { wakeAgentRuntime } from './services/runtime-wake.js';
 import { captureKnowledgeGapReply } from './services/knowledge-gap-capture.js';
+import { formatDiscordBridgeIdentity } from './bridge-identity.js';
 
 const contentRoot = resolveContentRoot();
 ensureBridgeDirs(contentRoot);
+console.log(`[discord-bridge] starting ${formatDiscordBridgeIdentity()}`);
 
 const config = loadDiscordBridgeConfig(contentRoot);
 if (!config) {

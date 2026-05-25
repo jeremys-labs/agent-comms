@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { routeDiscordMessage, routeDiscordMessageForBinding, shouldIgnoreDiscordMessage } from './bridge-router.js';
+import { discordMessage1508298833619058848 } from './fixtures/discord-message-1508298833619058848.js';
 
 const config = {
   selfUserId: 'bot-user',
@@ -45,6 +46,28 @@ describe('discord bridge router', () => {
       content_type: 'text/plain; charset=utf-8',
       size: 4370,
     }]);
+  });
+
+  it('preserves the real Discord attachment payload that regressed on 2026-05-24', () => {
+    const routed = routeDiscordMessage({
+      ...config,
+      subscriptions: [
+        ...config.subscriptions,
+        { agentKey: 'eli', channelId: '1491979880747765810' },
+      ],
+    } as any, discordMessage1508298833619058848);
+
+    expect(routed?.agentKey).toBe('eli');
+    expect(routed?.id).toBe('1508298833619058848');
+    expect(routed?.content).toBe('This is what the maintainers posted:');
+    expect(routed?.attachments).toEqual([
+      {
+        url: 'https://cdn.discordapp.com/attachments/1491979880747765810/1508298833669656606/message.txt?ex=6a150840&is=6a13b6c0&hm=52a5aed8da228497346a6bd283a42a41bd5b1c02105ac2a6a6afecab4e5759bb&',
+        filename: 'message.txt',
+        content_type: 'text/plain; charset=utf-8',
+        size: 4370,
+      },
+    ]);
   });
 
   it('ignores messages from the configured self user', () => {
