@@ -23,6 +23,30 @@ describe('discord bridge router', () => {
     expect(routed?.author).toBe('Jeremy');
   });
 
+  it('routes attachment-only messages and preserves attachment metadata', () => {
+    const routed = routeDiscordMessage(config as any, {
+      id: 'm-attachment',
+      channel_id: '1492892431543308439',
+      content: '',
+      author: { id: 'user1', username: 'Jeremy' },
+      attachments: [{
+        id: 'a1',
+        url: 'https://cdn.discordapp.com/attachments/message.txt?ex=1&is=2',
+        filename: 'message.txt',
+        content_type: 'text/plain; charset=utf-8',
+        size: 4370,
+      }],
+    });
+
+    expect(routed?.agentKey).toBe('marcus');
+    expect(routed?.attachments).toEqual([{
+      url: 'https://cdn.discordapp.com/attachments/message.txt?ex=1&is=2',
+      filename: 'message.txt',
+      content_type: 'text/plain; charset=utf-8',
+      size: 4370,
+    }]);
+  });
+
   it('ignores messages from the configured self user', () => {
     expect(shouldIgnoreDiscordMessage(config as any, {
       id: 'm2',

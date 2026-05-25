@@ -20,7 +20,7 @@ export function shouldIgnoreDiscordMessage(
   config: DiscordBridgeConfig,
   event: DiscordMessageEvent,
 ): boolean {
-  if (!event.content?.trim()) return true;
+  if (!event.content?.trim() && !event.attachments?.length) return true;
   if (config.selfUserId && event.author?.id === config.selfUserId) return true;
   return false;
 }
@@ -45,6 +45,12 @@ export function routeDiscordMessage(
     authorId: event.author?.id,
     referencedMessageId: event.referenced_message?.id,
     content: event.content,
+    attachments: event.attachments?.map((attachment) => ({
+      url: attachment.url,
+      filename: attachment.filename,
+      content_type: attachment.content_type,
+      size: attachment.size,
+    })),
     timestamp: event.timestamp ?? new Date().toISOString(),
   };
 }

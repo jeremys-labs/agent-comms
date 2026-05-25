@@ -22,12 +22,25 @@ describe('discord bridge store', () => {
       channelId: 'c1',
       author: 'Jeremy',
       content: 'hello',
+      attachments: [{
+        url: 'https://cdn.discordapp.com/attachments/message.txt',
+        filename: 'message.txt',
+        content_type: 'text/plain',
+        size: 12,
+      }],
       timestamp: '2026-04-13T18:00:00.000Z',
     });
 
     const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n');
     expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]).agentKey).toBe('marcus');
+    const parsed = JSON.parse(lines[0]);
+    expect(parsed.agentKey).toBe('marcus');
+    expect(parsed.attachments).toEqual([{
+      url: 'https://cdn.discordapp.com/attachments/message.txt',
+      filename: 'message.txt',
+      content_type: 'text/plain',
+      size: 12,
+    }]);
   });
 
   it('tracks last seen message IDs', () => {
