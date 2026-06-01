@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'fs';
 import { createAgentMailStore, type AgentMailPriority, type AgentMailStatus, type AgentMailType } from './index.js';
+import { validateSingleRecipient } from './recipients.js';
 
 interface ParsedArgs {
   command: string;
@@ -65,7 +66,7 @@ function main(): void {
       case 'send': {
         const message = store.send({
           fromAgent: getRequired(options, 'from'),
-          toAgent: getRequired(options, 'to'),
+          toAgent: validateSingleRecipient(getRequired(options, 'to')),
           type: getRequired(options, 'type') as AgentMailType,
           subject: getRequired(options, 'subject'),
           bodyMd: readBody(options),
