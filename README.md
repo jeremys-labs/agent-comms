@@ -16,10 +16,22 @@ Existing options tend to be either runtime-specific or framework-heavy. Claude h
 
 `agent-comms` is the smaller layer underneath that: runtime-neutral communication primitives that do not try to become the framework. Use the pieces directly from a CLI, import them as libraries, or wire them into your own runtime wrapper.
 
+## Product Boundary
+
+`agent-comms` owns reusable communication infrastructure that another agent host can adopt without
+depending on `mcc-tmux`: durable mailboxes, A2A client/gateway behavior, Discord bridge primitives,
+and external-event/webhook inboxes.
+
+`mcc-tmux` is one consumer/host of these primitives. It may mount routers, choose content roots,
+provide local runtime wrappers, and inject delivered prompts into tmux-managed sessions, but shared
+communication chains belong here first when Tom, Zara, Hank, or any non-mcc host would reasonably
+need the same capability.
+
 ## What's In The Box
 
 - `@agent-comms/mailbox`: a durable SQLite mailbox with message threads, lifecycle events, a CLI, and a library API.
 - `@agent-comms/discord-bridge`: a Discord Gateway bridge that routes Discord messages into local agent inbox files. It is drop-in compatible with Claude Code's native Discord channel configuration: use the same `DISCORD_BOT_TOKEN` env var, so existing Claude Code Discord setups can adopt the bridge without reconfiguring bot tokens.
+- `@agent-comms/event-inbox`: a durable external-event inbox with reusable webhook routing for GitHub and Home Assistant-style events.
 
 Runtime wrappers are intentionally not a public package yet. The first extraction keeps runtime-specific PTY shims in the consuming app until the mailbox and bridge APIs settle.
 

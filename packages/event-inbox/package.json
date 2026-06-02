@@ -11,6 +11,9 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "agent-event-inbox-gateway": "./dist/gateway.js"
+  },
   "files": [
     "dist",
     "README.md"
@@ -18,7 +21,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "gateway": "tsx src/gateway.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
