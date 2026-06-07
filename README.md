@@ -32,6 +32,7 @@ need the same capability.
 - `@agent-comms/mailbox`: a durable SQLite mailbox with message threads, lifecycle events, a CLI, and a library API.
 - `@agent-comms/discord-bridge`: a Discord Gateway bridge that routes Discord messages into local agent inbox files. It is drop-in compatible with Claude Code's native Discord channel configuration: use the same `DISCORD_BOT_TOKEN` env var, so existing Claude Code Discord setups can adopt the bridge without reconfiguring bot tokens.
 - `@agent-comms/event-inbox`: a durable external-event inbox with reusable webhook routing for GitHub and Home Assistant-style events.
+- `@agent-comms/outbound-router`: canonical governed outbound envelopes, policy checks, adapter routing, retries, and idempotency.
 
 Runtime wrappers are intentionally not a public package yet. The first extraction keeps runtime-specific PTY shims in the consuming app until the mailbox and bridge APIs settle.
 
