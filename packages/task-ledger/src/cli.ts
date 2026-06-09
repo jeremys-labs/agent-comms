@@ -146,8 +146,10 @@ async function main(): Promise<void> {
     }
     case 'list': {
       const fleet = Boolean(opts.fleet);
-      // --fleet defaults to the live board (in_progress + blocked) across all owners.
-      const status = opts.status ? (csv(opts.status) as TaskStatus[]) : fleet ? (['in_progress', 'blocked'] as TaskStatus[]) : undefined;
+      // --fleet defaults to the live board across all owners: in_progress + blocked
+      // + handed_off. handed_off matters most — a fresh handoff sitting unpicked-up
+      // is exactly what a coordination board must surface, not hide.
+      const status = opts.status ? (csv(opts.status) as TaskStatus[]) : fleet ? (['in_progress', 'blocked', 'handed_off'] as TaskStatus[]) : undefined;
       const tasks = listTasks({ owner: fleet ? undefined : opts.owner, status });
       if (opts.json) {
         console.log(JSON.stringify(tasks, null, 2));

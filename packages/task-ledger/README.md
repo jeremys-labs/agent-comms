@@ -25,7 +25,8 @@ task-ledger show    --id T
 task-ledger close   --id T [--outcome done|killed]
 ```
 
-`--fleet` is the live board: all owners, defaults to `in_progress,blocked`. Handoff
+`--fleet` is the live board: all owners, defaults to `in_progress,blocked,handed_off`
+(a fresh handoff sitting unpicked-up is exactly what the board must surface). Handoff
 notifications go through `@agent-comms/mailbox` (a `handoff`-type message to the new
 owner) and are **fail-soft** — the handoff state commits even if the mailbox is down.
 
