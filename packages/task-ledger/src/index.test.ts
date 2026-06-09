@@ -8,8 +8,11 @@ import {
   listTasks,
   updateTask,
   closeTask,
+  handoffTask,
+  blockTask,
   resolveTaskLedgerDir,
 } from './index.js';
+import { buildHandoffNotification } from './notify.js';
 
 let dir: string;
 
@@ -104,5 +107,52 @@ describe('closeTask', () => {
     const b = createTask({ title: 'b', owner: 'eli', createdBy: 'eli' }, dir);
     expect(closeTask(a.id, 'done', dir).status).toBe('done');
     expect(closeTask(b.id, 'killed', dir).status).toBe('killed');
+  });
+});
+
+describe('handoffTask (P1)', () => {
+  it('sets status handed_off and records the new agent', () => {
+    const t = createTask({ title: 'x', owner: 'eli', createdBy: 'eli' }, dir);
+    const h = handoffTask(t.id, 'zara', dir);
+    expect(h.status).toBe('handed_off');
+    expect(h.handoffTo).toBe('zara');
+    expect(getTask(t.id, dir)?.handoffTo).toBe('zara');
+  });
+});
+
+describe('blockTask (P1)', () => {
+  it('sets status blocked and records the blocker', () => {
+    const t = createTask({ title: 'x', owner: 'eli', createdBy: 'eli' }, dir);
+    const b = blockTask(t.id, 'waiting on Zara canary', dir);
+    expect(b.status).toBe('blocked');
+    expect(b.blockedOn).toBe('waiting on Zara canary');
+  });
+});
+
+describe('buildHandoffNotification (P1)', () => {
+  it('builds a handoff agent-mail addressed to the new owner, linking the task', () => {
+    const t = createTask(
+      { title: 'Run echo canary', owner: 'eli', createdBy: 'eli', priority: 'high', context: 'two-turn call', links: ['agent-mail:msg_1'] },
+      dir,
+    );
+    const h = handoffTask(t.id, 'zara', dir);
+    const note = buildHandoffNotification(h, 'eli');
+    expect(note.fromAgent).toBe('eli');
+    expect(note.toAgent).toBe('zara');
+    expect(note.type).toBe('handoff');
+    expect(note.subject).toContain('Run echo canary');
+    expect(note.bodyMd).toContain(h.id);
+    expect(note.bodyMd).toContain('two-turn call');
+    expect(note.priority).toBe('high');
+    // carries a ledger link to the task plus the task's own links
+    const targets = note.links.map((l) => l.target);
+    expect(targets).toContain(`task-ledger:${h.id}`);
+    expect(targets).toContain('agent-mail:msg_1');
+  });
+
+  it('maps ledger priority med -> mail priority normal', () => {
+    const t = createTask({ title: 'y', owner: 'eli', createdBy: 'eli' }, dir);
+    const h = handoffTask(t.id, 'marcus', dir);
+    expect(buildHandoffNotification(h, 'eli').priority).toBe('normal');
   });
 });

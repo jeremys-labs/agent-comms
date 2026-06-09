@@ -146,3 +146,14 @@ export function updateTask(id: string, patch: TaskPatch, dir = resolveTaskLedger
 export function closeTask(id: string, outcome: 'done' | 'killed', dir = resolveTaskLedgerDir()): TaskRecord {
   return updateTask(id, { status: outcome }, dir);
 }
+
+/** P1: hand a task to another agent. State only — the CLI emits the agent-mail
+ * notification (buildHandoffNotification) so the store stays mailbox-free. */
+export function handoffTask(id: string, toAgent: string, dir = resolveTaskLedgerDir()): TaskRecord {
+  return updateTask(id, { status: 'handed_off', handoffTo: toAgent }, dir);
+}
+
+/** P1: mark a task blocked with a reason or blocking task id. */
+export function blockTask(id: string, blockedOn: string, dir = resolveTaskLedgerDir()): TaskRecord {
+  return updateTask(id, { status: 'blocked', blockedOn }, dir);
+}

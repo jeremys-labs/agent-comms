@@ -5,10 +5,14 @@ import {
   listTasks,
   updateTask,
   closeTask,
+  handoffTask,
+  blockTask,
   type TaskStatus,
   type TaskPriority,
   type TaskPatch,
+  type TaskRecord,
 } from './index.js';
+import { buildHandoffNotification } from './notify.js';
 
 // Thin CLI over the tested store — parse, dispatch, print. No logic here.
 // Mirrors agent-mail ergonomics so the team already knows the shape.
@@ -45,14 +49,23 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-const USAGE = `task-ledger <command> [options]
-  add    --owner X --title "..." [--created-by Y] [--priority low|med|high] [--context "..."] [--links a,b] [--tags x,y]
-  update --id T [--status open|in_progress|blocked|handed_off|done|killed] [--priority ...] [--title ...] [--owner ...] [--context ...] [--blocked-on ...] [--handoff-to ...]
-  list   [--owner X] [--status in_progress,blocked] [--json]
-  show   --id T
-  close  --id T [--outcome done|killed]`;
+function fmtFleetLine(t: TaskRecord): string {
+  const extra = t.status === 'blocked' && t.blockedOn ? `  blocked-on: ${t.blockedOn}`
+    : t.status === 'handed_off' && t.handoffTo ? `  -> @${t.handoffTo}`
+    : '';
+  return `${t.id}  [${t.status}/${t.priority}]  @${t.owner}  ${t.title}${extra}`;
+}
 
-function main(): void {
+const USAGE = `task-ledger <command> [options]
+  add     --owner X --title "..." [--created-by Y] [--priority low|med|high] [--context "..."] [--links a,b] [--tags x,y]
+  update  --id T [--status open|in_progress|blocked|handed_off|done|killed] [--priority ...] [--title ...] [--owner ...] [--context ...] [--blocked-on ...] [--handoff-to ...]
+  handoff --id T --to AGENT [--from AGENT]      (sets handed_off + sends an agent-mail handoff notification)
+  block   --id T --blocked-on "..."
+  list    [--owner X] [--status in_progress,blocked] [--fleet] [--json]
+  show    --id T
+  close   --id T [--outcome done|killed]`;
+
+async function main(): Promise<void> {
   const { cmd, opts } = parseArgs(process.argv.slice(2));
 
   switch (cmd) {
@@ -89,14 +102,59 @@ function main(): void {
       }
       break;
     }
+    case 'handoff': {
+      if (!opts.id || !opts.to) fail('handoff requires --id and --to');
+      const before = getTask(opts.id);
+      if (!before) fail(`task not found: ${opts.id}`);
+      const from = opts.from ?? before.owner;
+      let task: TaskRecord;
+      try {
+        task = handoffTask(opts.id, opts.to);
+      } catch (e) {
+        return fail(e instanceof Error ? e.message : String(e));
+      }
+      // Fail-soft notification: the handoff STATE is already committed; if the
+      // mailbox can't be reached, warn but don't fail the handoff.
+      try {
+        const note = buildHandoffNotification(task, from);
+        const { createAgentMailStore } = await import('@agent-comms/mailbox');
+        createAgentMailStore().send({
+          fromAgent: note.fromAgent,
+          toAgent: note.toAgent,
+          type: note.type,
+          subject: note.subject,
+          bodyMd: note.bodyMd,
+          priority: note.priority,
+          requiresResponse: note.requiresResponse,
+          links: note.links,
+        });
+        console.error(`notified @${note.toAgent} via agent-mail`);
+      } catch (e) {
+        console.error(`warning: handoff saved but notification failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      console.log(JSON.stringify(task, null, 2));
+      break;
+    }
+    case 'block': {
+      if (!opts.id || !opts['blocked-on']) fail('block requires --id and --blocked-on');
+      try {
+        console.log(JSON.stringify(blockTask(opts.id, opts['blocked-on']), null, 2));
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e));
+      }
+      break;
+    }
     case 'list': {
-      const tasks = listTasks({ owner: opts.owner, status: opts.status ? (csv(opts.status) as TaskStatus[]) : undefined });
+      const fleet = Boolean(opts.fleet);
+      // --fleet defaults to the live board (in_progress + blocked) across all owners.
+      const status = opts.status ? (csv(opts.status) as TaskStatus[]) : fleet ? (['in_progress', 'blocked'] as TaskStatus[]) : undefined;
+      const tasks = listTasks({ owner: fleet ? undefined : opts.owner, status });
       if (opts.json) {
         console.log(JSON.stringify(tasks, null, 2));
       } else if (tasks.length === 0) {
         console.log('(no tasks)');
       } else {
-        for (const t of tasks) console.log(fmtLine(t));
+        for (const t of tasks) console.log(fleet ? fmtFleetLine(t) : fmtLine(t));
       }
       break;
     }
@@ -128,4 +186,4 @@ function main(): void {
   }
 }
 
-main();
+main().catch((e) => fail(e instanceof Error ? e.message : String(e)));
