@@ -69,11 +69,23 @@ export interface ListAgentMailInput {
   status?: AgentMailStatus;
 }
 
+export interface ListAgentMailSentInput {
+  agent: string;
+  status?: AgentMailStatus;
+}
+
+export interface AgentMailMessageWithEvents {
+  message: AgentMailMessage;
+  events: AgentMailEvent[];
+}
+
 export interface AgentMailStore {
   send(input: SendAgentMailInput): AgentMailMessage;
   reply(input: ReplyAgentMailInput): AgentMailMessage;
   listInbox(input: ListAgentMailInput): AgentMailMessage[];
+  listSent(input: ListAgentMailSentInput): AgentMailMessage[];
   getMessage(messageId: string): AgentMailMessage | null;
+  getMessageWithEvents(messageId: string): AgentMailMessageWithEvents | null;
   getThread(correlationId: string): AgentMailMessage[];
   listEvents(messageId: string): AgentMailEvent[];
   ackMessage(actorAgent: string, messageId: string): AgentMailMessage;
@@ -227,6 +239,11 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
     WHERE to_agent = ? AND (? IS NULL OR status = ?)
     ORDER BY created_at ASC
   `);
+  const selectSent = db.prepare(`
+    SELECT * FROM messages
+    WHERE from_agent = ? AND (? IS NULL OR status = ?)
+    ORDER BY created_at DESC, rowid DESC
+  `);
   const selectThread = db.prepare('SELECT * FROM messages WHERE correlation_id = ? ORDER BY created_at ASC');
   const selectEvents = db.prepare('SELECT * FROM message_events WHERE message_id = ? ORDER BY created_at ASC');
   const updateAck = db.prepare(`
@@ -305,9 +322,22 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
       return (selectInbox.all(input.agent, input.status ?? null, input.status ?? null) as MessageRow[]).map(mapMessageRow);
     },
 
+    listSent(input) {
+      return (selectSent.all(input.agent, input.status ?? null, input.status ?? null) as MessageRow[]).map(mapMessageRow);
+    },
+
     getMessage(messageId) {
       const row = selectMessage.get(messageId) as MessageRow | undefined;
       return row ? mapMessageRow(row) : null;
+    },
+
+    getMessageWithEvents(messageId) {
+      const row = selectMessage.get(messageId) as MessageRow | undefined;
+      if (!row) return null;
+      return {
+        message: mapMessageRow(row),
+        events: (selectEvents.all(messageId) as EventRow[]).map(mapEventRow),
+      };
     },
 
     getThread(correlationId) {

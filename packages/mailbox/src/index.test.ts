@@ -57,6 +57,64 @@ describe('agent mail', () => {
     store.close();
   });
 
+  it('listSent returns messages sent by a given agent', () => {
+    const store = createAgentMailStore(dbPath);
+    const m1 = store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'question', subject: 'Q1', bodyMd: 'body' });
+    const m2 = store.send({ fromAgent: 'eli', toAgent: 'isla', type: 'status', subject: 'S1', bodyMd: 'body' });
+    store.send({ fromAgent: 'marcus', toAgent: 'eli', type: 'note', subject: 'N1', bodyMd: 'body' });
+
+    const sent = store.listSent({ agent: 'eli' });
+    expect(sent.map((m) => m.id)).toEqual(expect.arrayContaining([m1.id, m2.id]));
+    expect(sent.every((m) => m.fromAgent === 'eli')).toBe(true);
+    expect(sent).toHaveLength(2);
+    store.close();
+  });
+
+  it('listSent filters by status', () => {
+    const store = createAgentMailStore(dbPath);
+    const m1 = store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'question', subject: 'Q1', bodyMd: 'body' });
+    const m2 = store.send({ fromAgent: 'eli', toAgent: 'isla', type: 'status', subject: 'S1', bodyMd: 'body' });
+    store.ackMessage('marcus', m1.id);
+
+    expect(store.listSent({ agent: 'eli', status: 'new' }).map((m) => m.id)).toEqual([m2.id]);
+    expect(store.listSent({ agent: 'eli', status: 'acked' }).map((m) => m.id)).toEqual([m1.id]);
+    store.close();
+  });
+
+  it('listSent returns messages newest-first', () => {
+    const store = createAgentMailStore(dbPath);
+    const m1 = store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'note', subject: 'A', bodyMd: 'body' });
+    const m2 = store.send({ fromAgent: 'eli', toAgent: 'isla', type: 'note', subject: 'B', bodyMd: 'body' });
+
+    const sent = store.listSent({ agent: 'eli' });
+    expect(sent[0].id).toBe(m2.id);
+    expect(sent[1].id).toBe(m1.id);
+    store.close();
+  });
+
+  it('getMessageWithEvents returns null for unknown id', () => {
+    const store = createAgentMailStore(dbPath);
+    expect(store.getMessageWithEvents('msg_unknown')).toBeNull();
+    store.close();
+  });
+
+  it('getMessageWithEvents returns message and its event log', () => {
+    const store = createAgentMailStore(dbPath);
+    const sent = store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'question', subject: 'Q', bodyMd: 'body', requiresResponse: true });
+    store.ackMessage('marcus', sent.id);
+    store.reply({ actorAgent: 'marcus', messageId: sent.id, bodyMd: 'answer' });
+
+    const result = store.getMessageWithEvents(sent.id);
+    expect(result).not.toBeNull();
+    expect(result!.message.id).toBe(sent.id);
+    expect(result!.message.status).toBe('acked');
+    const eventTypes = result!.events.map((e) => e.eventType);
+    expect(eventTypes).toContain('created');
+    expect(eventTypes).toContain('acked');
+    expect(eventTypes).toContain('replied');
+    store.close();
+  });
+
   it('formats agent mail for runtime injection', () => {
     const prompt = formatAgentMailForRuntime({
       id: 'msg_123',

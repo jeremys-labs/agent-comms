@@ -107,6 +107,20 @@ function main(): void {
         printJson(message);
         break;
       }
+      case 'outbox': {
+        const messages = store.listSent({
+          agent: getRequired(options, 'from'),
+          status: getOptional(options, 'status') as AgentMailStatus | undefined,
+        });
+        printJson(messages);
+        break;
+      }
+      case 'show': {
+        const result = store.getMessageWithEvents(getRequired(options, 'id'));
+        if (!result) throw new Error(`Message not found: ${getRequired(options, 'id')}`);
+        printJson(result);
+        break;
+      }
       case 'thread': {
         const messageId = getOptional(options, 'id');
         const correlationId = getOptional(options, 'correlation-id');
