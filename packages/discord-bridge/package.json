@@ -12,7 +12,8 @@
     }
   },
   "bin": {
-    "agent-discord-bridge": "./dist/gateway.js"
+    "agent-discord-bridge": "./dist/gateway.js",
+    "agent-discord-send": "./dist/send-cli.js"
   },
   "files": [
     "dist",

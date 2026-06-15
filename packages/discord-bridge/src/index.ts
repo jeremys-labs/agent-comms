@@ -1,5 +1,7 @@
 export * from './bridge-config.js';
 export * from './bridge-identity.js';
+export * from './delivery-health.js';
+export * from './outbound-client.js';
 export * from './paths.js';
 export * from './services/bridge-router.js';
 export * from './services/bridge-store.js';
