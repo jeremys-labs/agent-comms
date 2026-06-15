@@ -10,6 +10,8 @@ import {
   closeTask,
   handoffTask,
   blockTask,
+  isTaskStale,
+  listStaleTasks,
   resolveTaskLedgerDir,
 } from './index.js';
 import { buildHandoffNotification } from './notify.js';
@@ -98,6 +100,38 @@ describe('listTasks', () => {
     updateTask(z.id, { status: 'blocked' }, dir);
     expect(listTasks({ owner: 'eli' }, dir).map((t) => t.id)).toEqual([e.id]);
     expect(listTasks({ status: ['blocked'] }, dir).map((t) => t.id)).toEqual([z.id]);
+  });
+});
+
+describe('stale task surfacing (P2)', () => {
+  it('regression: surfaces active work after the real four-week silent-slip window', () => {
+    const task = createTask(
+      { title: 'Build OB1 outcome feedback loop', owner: 'eli', createdBy: 'eli' },
+      dir,
+    );
+    const slipped: typeof task = {
+      ...task,
+      status: 'in_progress',
+      updatedAt: '2026-05-12T12:00:00.000Z',
+    };
+    fs.writeFileSync(path.join(dir, 'tasks', `${task.id}.json`), JSON.stringify(slipped));
+
+    const stale = listStaleTasks(
+      { olderThanDays: 7, now: new Date('2026-06-09T12:00:00.000Z') },
+      dir,
+    );
+
+    expect(stale.map((item) => item.id)).toEqual([task.id]);
+  });
+
+  it('does not flag recently updated or closed work', () => {
+    const recent = createTask({ title: 'recent', owner: 'eli', createdBy: 'eli' }, dir);
+    const done = closeTask(createTask({ title: 'done', owner: 'eli', createdBy: 'eli' }, dir).id, 'done', dir);
+    const now = new Date(recent.updatedAt);
+    now.setUTCDate(now.getUTCDate() + 30);
+
+    expect(isTaskStale(recent, 31, now)).toBe(false);
+    expect(isTaskStale(done, 0, now)).toBe(false);
   });
 });
 

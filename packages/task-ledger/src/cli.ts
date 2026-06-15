@@ -7,6 +7,8 @@ import {
   closeTask,
   handoffTask,
   blockTask,
+  listStaleTasks,
+  DEFAULT_STALE_TASK_DAYS,
   type TaskStatus,
   type TaskPriority,
   type TaskPatch,
@@ -62,6 +64,7 @@ const USAGE = `task-ledger <command> [options]
   handoff --id T --to AGENT [--from AGENT]      (sets handed_off + sends an agent-mail handoff notification)
   block   --id T --blocked-on "..."
   list    [--owner X] [--status in_progress,blocked] [--fleet] [--json]
+  stale   [--owner X] [--days N] [--json]            (active tasks with no update in N days; default 7)
   show    --id T
   close   --id T [--outcome done|killed]`;
 
@@ -157,6 +160,19 @@ async function main(): Promise<void> {
         console.log('(no tasks)');
       } else {
         for (const t of tasks) console.log(fleet ? fmtFleetLine(t) : fmtLine(t));
+      }
+      break;
+    }
+    case 'stale': {
+      const days = opts.days === undefined ? DEFAULT_STALE_TASK_DAYS : Number(opts.days);
+      if (!Number.isFinite(days) || days < 0) fail('--days must be a non-negative number');
+      const tasks = listStaleTasks({ owner: opts.owner, olderThanDays: days });
+      if (opts.json) {
+        console.log(JSON.stringify(tasks, null, 2));
+      } else if (tasks.length === 0) {
+        console.log('(no stale tasks)');
+      } else {
+        for (const t of tasks) console.log(`${fmtFleetLine(t)}  STALE:${days}d`);
       }
       break;
     }

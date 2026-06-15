@@ -21,6 +21,7 @@ task-ledger update  --id T [--status open|in_progress|blocked|handed_off|done|ki
 task-ledger handoff --id T --to AGENT [--from AGENT]   # sets handed_off + sends an agent-mail handoff notification
 task-ledger block   --id T --blocked-on "..."
 task-ledger list    [--owner X] [--status in_progress,blocked] [--fleet] [--json]
+task-ledger stale   [--owner X] [--days N] [--json]
 task-ledger show    --id T
 task-ledger close   --id T [--outcome done|killed]
 ```
@@ -30,11 +31,15 @@ task-ledger close   --id T [--outcome done|killed]
 notifications go through `@agent-comms/mailbox` (a `handoff`-type message to the new
 owner) and are **fail-soft** — the handoff state commits even if the mailbox is down.
 
+`stale` is the P2 surfacing command. It lists active tasks (`open`, `in_progress`,
+`blocked`, or `handed_off`) whose `updatedAt` is at least 7 days old by default.
+Use `--days N` to tune the threshold. Closed work is never reported as stale.
+
 ## Status
 
 - **P0 (done):** data model + atomic file store + `add/update/list/show/close`, single-agent usable.
 - **P1 (done, on-branch):** `handoff` + `block`/`blocked_on` + `--fleet` view + handoff notification via the agent-mail event path.
-- **P2 (next):** surfacing — Isla fleet-board command, optional newsletter line, stale-blocker escalation.
+- **P2 (partial):** stale-work surfacing command shipped; Isla fleet-board/newsletter integration remains.
 - **Deferred (flagged, not built):** global `task-ledger` bin install for multi-agent shells; compare-and-swap on `updatedAt` for concurrent same-task updates.
 
 Spec: `/Volumes/Repo-Drive/agents/eli/docs/self-improvement/2026-06-09-two-lane-loop-and-task-ledger-spec.md`

@@ -56,6 +56,15 @@ export interface ListFilter {
   status?: TaskStatus[];
 }
 
+export interface StaleTaskOptions {
+  olderThanDays?: number;
+  owner?: string;
+  now?: Date;
+}
+
+const ACTIVE_TASK_STATUSES = new Set<TaskStatus>(['open', 'in_progress', 'blocked', 'handed_off']);
+export const DEFAULT_STALE_TASK_DAYS = 7;
+
 export function resolveTaskLedgerDir(): string {
   return process.env.TASK_LEDGER_DIR || DEFAULT_TASK_LEDGER_DIR;
 }
@@ -133,6 +142,27 @@ export function listTasks(filter: ListFilter = {}, dir = resolveTaskLedgerDir())
     .filter((t) => (filter.owner ? t.owner === filter.owner : true))
     .filter((t) => (statusSet ? statusSet.has(t.status) : true))
     .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+}
+
+export function isTaskStale(
+  task: TaskRecord,
+  olderThanDays = DEFAULT_STALE_TASK_DAYS,
+  now = new Date(),
+): boolean {
+  if (!ACTIVE_TASK_STATUSES.has(task.status)) return false;
+  if (!Number.isFinite(olderThanDays) || olderThanDays < 0) {
+    throw new Error('olderThanDays must be a non-negative number');
+  }
+  const updatedAt = Date.parse(task.updatedAt);
+  if (!Number.isFinite(updatedAt)) return true;
+  return now.getTime() - updatedAt >= olderThanDays * 24 * 60 * 60 * 1000;
+}
+
+/** P2: surface active work that has silently stopped moving. */
+export function listStaleTasks(options: StaleTaskOptions = {}, dir = resolveTaskLedgerDir()): TaskRecord[] {
+  const olderThanDays = options.olderThanDays ?? DEFAULT_STALE_TASK_DAYS;
+  const now = options.now ?? new Date();
+  return listTasks({ owner: options.owner }, dir).filter((task) => isTaskStale(task, olderThanDays, now));
 }
 
 export function updateTask(id: string, patch: TaskPatch, dir = resolveTaskLedgerDir()): TaskRecord {
