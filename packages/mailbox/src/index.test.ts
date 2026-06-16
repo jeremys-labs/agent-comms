@@ -115,6 +115,118 @@ describe('agent mail', () => {
     store.close();
   });
 
+  describe('searchMessages', () => {
+    it('finds a message by a word in the subject', () => {
+      const store = createAgentMailStore(dbPath);
+      const msg = store.send({
+        fromAgent: 'eli',
+        toAgent: 'marcus',
+        type: 'question',
+        subject: 'Delivery reconciler gap',
+        bodyMd: 'Need to discuss the outbox write.',
+      });
+      store.send({
+        fromAgent: 'isla',
+        toAgent: 'eli',
+        type: 'status',
+        subject: 'Weekly standup',
+        bodyMd: 'Nothing new here.',
+      });
+
+      const results = store.searchMessages({ query: 'reconciler' });
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe(msg.id);
+      store.close();
+    });
+
+    it('finds a message by a word in the body', () => {
+      const store = createAgentMailStore(dbPath);
+      store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'note', subject: 'Topic A', bodyMd: 'Check the CONTENT_ROOT drift issue.' });
+      store.send({ fromAgent: 'eli', toAgent: 'isla', type: 'note', subject: 'Topic B', bodyMd: 'Nothing related.' });
+
+      const results = store.searchMessages({ query: 'CONTENT_ROOT' });
+      expect(results).toHaveLength(1);
+      expect(results[0].subject).toBe('Topic A');
+      store.close();
+    });
+
+    it('returns empty array when query matches nothing', () => {
+      const store = createAgentMailStore(dbPath);
+      store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'note', subject: 'Hello', bodyMd: 'World.' });
+
+      const results = store.searchMessages({ query: 'xyzzy_nonexistent_token_42' });
+      expect(results).toHaveLength(0);
+      store.close();
+    });
+
+    it('filters results by fromAgent', () => {
+      const store = createAgentMailStore(dbPath);
+      store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'note', subject: 'delivery issue', bodyMd: 'eli wrote this' });
+      store.send({ fromAgent: 'isla', toAgent: 'marcus', type: 'note', subject: 'delivery issue', bodyMd: 'isla wrote this' });
+
+      const results = store.searchMessages({ query: 'delivery', fromAgent: 'eli' });
+      expect(results).toHaveLength(1);
+      expect(results[0].fromAgent).toBe('eli');
+      store.close();
+    });
+
+    it('filters results by toAgent', () => {
+      const store = createAgentMailStore(dbPath);
+      store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'note', subject: 'scheduler fix', bodyMd: 'details' });
+      store.send({ fromAgent: 'eli', toAgent: 'isla', type: 'note', subject: 'scheduler fix', bodyMd: 'details' });
+
+      const results = store.searchMessages({ query: 'scheduler', toAgent: 'isla' });
+      expect(results).toHaveLength(1);
+      expect(results[0].toAgent).toBe('isla');
+      store.close();
+    });
+
+    it('filters results by status', () => {
+      const store = createAgentMailStore(dbPath);
+      const m1 = store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'question', subject: 'recall canary', bodyMd: 'status check' });
+      store.send({ fromAgent: 'eli', toAgent: 'isla', type: 'question', subject: 'recall canary', bodyMd: 'status check' });
+      store.ackMessage('marcus', m1.id);
+
+      const newResults = store.searchMessages({ query: 'recall', status: 'new' });
+      expect(newResults).toHaveLength(1);
+      expect(newResults[0].toAgent).toBe('isla');
+
+      const ackedResults = store.searchMessages({ query: 'recall', status: 'acked' });
+      expect(ackedResults).toHaveLength(1);
+      expect(ackedResults[0].id).toBe(m1.id);
+      store.close();
+    });
+
+    it('respects the limit option', () => {
+      const store = createAgentMailStore(dbPath);
+      for (let i = 0; i < 5; i++) {
+        store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'note', subject: `fleet update ${i}`, bodyMd: 'body' });
+      }
+
+      const results = store.searchMessages({ query: 'fleet', limit: 3 });
+      expect(results).toHaveLength(3);
+      store.close();
+    });
+
+    it('backfills existing messages opened on a fresh FTS table', () => {
+      // Open db once (no messages yet — FTS empty, backfill no-ops)
+      const store1 = createAgentMailStore(dbPath);
+      store1.close();
+
+      // Write a message directly via a second store (which also has the trigger, so this inserts into FTS)
+      const store2 = createAgentMailStore(dbPath);
+      const msg = store2.send({ fromAgent: 'eli', toAgent: 'isla', type: 'note', subject: 'backfill test subject', bodyMd: 'should be indexed' });
+      store2.close();
+
+      // Open a third store — FTS is not empty (trigger wrote it), no backfill needed; search still works
+      const store3 = createAgentMailStore(dbPath);
+      const results = store3.searchMessages({ query: 'backfill' });
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe(msg.id);
+      store3.close();
+    });
+  });
+
   it('formats agent mail for runtime injection', () => {
     const prompt = formatAgentMailForRuntime({
       id: 'msg_123',

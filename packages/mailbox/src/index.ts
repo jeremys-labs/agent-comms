@@ -79,6 +79,14 @@ export interface AgentMailMessageWithEvents {
   events: AgentMailEvent[];
 }
 
+export interface SearchAgentMailInput {
+  query: string;
+  fromAgent?: string;
+  toAgent?: string;
+  status?: AgentMailStatus;
+  limit?: number;
+}
+
 export interface AgentMailStore {
   send(input: SendAgentMailInput): AgentMailMessage;
   reply(input: ReplyAgentMailInput): AgentMailMessage;
@@ -88,6 +96,7 @@ export interface AgentMailStore {
   getMessageWithEvents(messageId: string): AgentMailMessageWithEvents | null;
   getThread(correlationId: string): AgentMailMessage[];
   listEvents(messageId: string): AgentMailEvent[];
+  searchMessages(input: SearchAgentMailInput): AgentMailMessage[];
   ackMessage(actorAgent: string, messageId: string): AgentMailMessage;
   closeMessage(actorAgent: string, messageId: string): AgentMailMessage;
   close(): void;
@@ -219,7 +228,36 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_agent_mail_events ON message_events(message_id, created_at);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+      message_id UNINDEXED,
+      subject,
+      body_md,
+      tokenize='porter unicode61'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(message_id, subject, body_md) VALUES (new.id, new.subject, new.body_md);
+    END;
   `);
+
+  // Backfill FTS for messages that predate this migration
+  const ftsCount = (db.prepare('SELECT COUNT(*) as c FROM messages_fts').get() as { c: number }).c;
+  if (ftsCount === 0) {
+    const existing = db.prepare('SELECT id, subject, body_md FROM messages').all() as Array<{
+      id: string;
+      subject: string;
+      body_md: string;
+    }>;
+    if (existing.length > 0) {
+      const bulkInsertFts = db.prepare(
+        'INSERT INTO messages_fts(message_id, subject, body_md) VALUES (?, ?, ?)'
+      );
+      db.transaction(() => {
+        for (const row of existing) bulkInsertFts.run(row.id, row.subject, row.body_md);
+      })();
+    }
+  }
 
   const insertMessage = db.prepare(`
     INSERT INTO messages (
@@ -246,6 +284,17 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
   `);
   const selectThread = db.prepare('SELECT * FROM messages WHERE correlation_id = ? ORDER BY created_at ASC');
   const selectEvents = db.prepare('SELECT * FROM message_events WHERE message_id = ? ORDER BY created_at ASC');
+  const selectSearch = db.prepare(`
+    SELECT m.*
+    FROM messages_fts
+    JOIN messages m ON m.id = messages_fts.message_id
+    WHERE messages_fts MATCH ?
+      AND (? IS NULL OR m.from_agent = ?)
+      AND (? IS NULL OR m.to_agent = ?)
+      AND (? IS NULL OR m.status = ?)
+    ORDER BY rank
+    LIMIT ?
+  `);
   const updateAck = db.prepare(`
     UPDATE messages
     SET status = CASE WHEN status = 'new' THEN 'acked' ELSE status END,
@@ -346,6 +395,22 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
 
     listEvents(messageId) {
       return (selectEvents.all(messageId) as EventRow[]).map(mapEventRow);
+    },
+
+    searchMessages(input) {
+      const limit = input.limit ?? 20;
+      return (
+        selectSearch.all(
+          input.query,
+          input.fromAgent ?? null,
+          input.fromAgent ?? null,
+          input.toAgent ?? null,
+          input.toAgent ?? null,
+          input.status ?? null,
+          input.status ?? null,
+          limit,
+        ) as MessageRow[]
+      ).map(mapMessageRow);
     },
 
     ackMessage(actorAgent, messageId) {

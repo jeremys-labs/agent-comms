@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import fs from 'fs';
-import { createAgentMailStore, type AgentMailPriority, type AgentMailStatus, type AgentMailType } from './index.js';
+import {
+  createAgentMailStore,
+  type AgentMailPriority,
+  type AgentMailStatus,
+  type AgentMailType,
+} from './index.js';
 import { validateSingleRecipient } from './recipients.js';
 
 interface ParsedArgs {
@@ -119,6 +124,18 @@ function main(): void {
         const result = store.getMessageWithEvents(getRequired(options, 'id'));
         if (!result) throw new Error(`Message not found: ${getRequired(options, 'id')}`);
         printJson(result);
+        break;
+      }
+      case 'search': {
+        const limitStr = getOptional(options, 'limit');
+        const results = store.searchMessages({
+          query: getRequired(options, 'query'),
+          fromAgent: getOptional(options, 'from'),
+          toAgent: getOptional(options, 'to'),
+          status: getOptional(options, 'status') as AgentMailStatus | undefined,
+          limit: limitStr ? Number(limitStr) : undefined,
+        });
+        printJson(results);
         break;
       }
       case 'thread': {
