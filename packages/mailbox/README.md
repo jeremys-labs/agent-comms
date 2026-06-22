@@ -43,4 +43,11 @@ agent-mail inbox --agent marcus --status new
 agent-mail ack --agent marcus --id msg_123
 agent-mail reply --agent marcus --id msg_123 --body "I own it."
 agent-mail close --agent marcus --id msg_123
+agent-mail audit-required --older-than-minutes 60 [--from eli] [--to marcus] [--fail-on-overdue]
 ```
+
+`audit-required` reports required-response messages that crossed the age
+threshold without a reply. It distinguishes unacknowledged delivery,
+acknowledged-but-unanswered work, and threads closed without a response.
+Acknowledgement alone is not treated as completion. `--fail-on-overdue` sets
+exit code 2 for health checks and scheduled audits.

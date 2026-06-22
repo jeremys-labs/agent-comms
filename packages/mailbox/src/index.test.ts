@@ -57,6 +57,90 @@ describe('agent mail', () => {
     store.close();
   });
 
+  it('audits overdue required-response delivery without confusing ack with response', () => {
+    const store = createAgentMailStore(dbPath);
+    const base = Date.now();
+    const unacked = store.send({
+      fromAgent: 'eli',
+      toAgent: 'marcus',
+      type: 'question',
+      subject: 'May 23 delivery regression',
+      bodyMd: 'Submission is not proof of receipt or response.',
+      requiresResponse: true,
+    });
+    const acked = store.send({
+      fromAgent: 'eli',
+      toAgent: 'isla',
+      type: 'question',
+      subject: 'Acknowledged but unanswered',
+      bodyMd: 'Please reply.',
+      requiresResponse: true,
+    });
+    store.ackMessage('isla', acked.id);
+    const answered = store.send({
+      fromAgent: 'eli',
+      toAgent: 'zara',
+      type: 'question',
+      subject: 'Answered',
+      bodyMd: 'Please reply.',
+      requiresResponse: true,
+    });
+    store.ackMessage('zara', answered.id);
+    store.reply({ actorAgent: 'zara', messageId: answered.id, bodyMd: 'Done.' });
+    const normal = store.send({
+      fromAgent: 'eli',
+      toAgent: 'marcus',
+      type: 'note',
+      subject: 'No response requested',
+      bodyMd: 'FYI',
+    });
+
+    const report = store.auditRequiredResponses({
+      olderThanMs: 60_000,
+      now: new Date(base + 120_000),
+      fromAgent: 'eli',
+    });
+
+    expect(report.overdue.map((item) => [item.message.id, item.state])).toEqual([
+      [unacked.id, 'unacked'],
+      [acked.id, 'awaiting_response'],
+    ]);
+    expect(report.counts).toEqual({
+      unacked: 1,
+      awaiting_response: 1,
+      closed_without_response: 0,
+    });
+    expect(report.overdue.some((item) => item.message.id === answered.id)).toBe(false);
+    expect(report.overdue.some((item) => item.message.id === normal.id)).toBe(false);
+    store.close();
+  });
+
+  it('surfaces required-response threads closed without a reply as orphaned', () => {
+    const store = createAgentMailStore(dbPath);
+    const base = Date.now();
+    const message = store.send({
+      fromAgent: 'eli',
+      toAgent: 'marcus',
+      type: 'question',
+      subject: 'Closed thread double-send regression',
+      bodyMd: 'A close is not a reply.',
+      requiresResponse: true,
+    });
+    store.closeMessage('marcus', message.id);
+
+    const report = store.auditRequiredResponses({
+      olderThanMs: 0,
+      now: new Date(base + 1_000),
+    });
+
+    expect(report.overdue).toHaveLength(1);
+    expect(report.overdue[0]).toMatchObject({
+      state: 'closed_without_response',
+      message: { id: message.id },
+    });
+    store.close();
+  });
+
   it('formats agent mail for runtime injection', () => {
     const prompt = formatAgentMailForRuntime({
       id: 'msg_123',

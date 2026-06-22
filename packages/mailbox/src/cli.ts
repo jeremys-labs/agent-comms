@@ -45,6 +45,15 @@ function getBoolean(options: Map<string, string | boolean>, key: string): boolea
   return options.get(key) === true;
 }
 
+function getNonNegativeNumber(options: Map<string, string | boolean>, key: string, fallback: number): number {
+  const value = getOptional(options, key);
+  const parsed = value === undefined ? fallback : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`--${key} must be a non-negative number`);
+  }
+  return parsed;
+}
+
 function readBody(options: Map<string, string | boolean>): string {
   const body = getOptional(options, 'body');
   const bodyFile = getOptional(options, 'body-file');
@@ -116,6 +125,19 @@ function main(): void {
         const resolvedCorrelationId = correlationId ?? store.getMessage(messageId!)?.correlationId;
         if (!resolvedCorrelationId) throw new Error(`Message not found: ${messageId}`);
         printJson(store.getThread(resolvedCorrelationId));
+        break;
+      }
+      case 'audit-required': {
+        const olderThanMinutes = getNonNegativeNumber(options, 'older-than-minutes', 60);
+        const report = store.auditRequiredResponses({
+          olderThanMs: olderThanMinutes * 60_000,
+          fromAgent: getOptional(options, 'from'),
+          toAgent: getOptional(options, 'to'),
+        });
+        printJson(report);
+        if (getBoolean(options, 'fail-on-overdue') && report.overdue.length > 0) {
+          process.exitCode = 2;
+        }
         break;
       }
       default:
