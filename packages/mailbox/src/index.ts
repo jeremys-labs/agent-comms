@@ -79,6 +79,28 @@ export interface AgentMailMessageWithEvents {
   events: AgentMailEvent[];
 }
 
+export type RequiredResponseAuditState = 'unacked' | 'awaiting_response' | 'closed_without_response';
+
+export interface RequiredResponseAuditItem {
+  message: AgentMailMessage;
+  state: RequiredResponseAuditState;
+  ageMs: number;
+}
+
+export interface AuditRequiredResponsesInput {
+  olderThanMs: number;
+  now?: Date;
+  fromAgent?: string;
+  toAgent?: string;
+}
+
+export interface RequiredResponseAuditReport {
+  generatedAt: string;
+  olderThanMs: number;
+  overdue: RequiredResponseAuditItem[];
+  counts: Record<RequiredResponseAuditState, number>;
+}
+
 export interface AgentMailStore {
   send(input: SendAgentMailInput): AgentMailMessage;
   reply(input: ReplyAgentMailInput): AgentMailMessage;
@@ -88,6 +110,7 @@ export interface AgentMailStore {
   getMessageWithEvents(messageId: string): AgentMailMessageWithEvents | null;
   getThread(correlationId: string): AgentMailMessage[];
   listEvents(messageId: string): AgentMailEvent[];
+  auditRequiredResponses(input: AuditRequiredResponsesInput): RequiredResponseAuditReport;
   ackMessage(actorAgent: string, messageId: string): AgentMailMessage;
   closeMessage(actorAgent: string, messageId: string): AgentMailMessage;
   close(): void;
@@ -246,6 +269,18 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
   `);
   const selectThread = db.prepare('SELECT * FROM messages WHERE correlation_id = ? ORDER BY created_at ASC');
   const selectEvents = db.prepare('SELECT * FROM message_events WHERE message_id = ? ORDER BY created_at ASC');
+  const selectRequiredResponses = db.prepare(`
+    SELECT * FROM messages
+    WHERE requires_response = 1
+      AND (? IS NULL OR from_agent = ?)
+      AND (? IS NULL OR to_agent = ?)
+    ORDER BY created_at ASC
+  `);
+  const selectReplyEvent = db.prepare(`
+    SELECT 1 FROM message_events
+    WHERE message_id = ? AND event_type = 'replied'
+    LIMIT 1
+  `);
   const updateAck = db.prepare(`
     UPDATE messages
     SET status = CASE WHEN status = 'new' THEN 'acked' ELSE status END,
@@ -346,6 +381,44 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
 
     listEvents(messageId) {
       return (selectEvents.all(messageId) as EventRow[]).map(mapEventRow);
+    },
+
+    auditRequiredResponses(input) {
+      if (!Number.isFinite(input.olderThanMs) || input.olderThanMs < 0) {
+        throw new Error('olderThanMs must be a non-negative finite number');
+      }
+      const now = input.now ?? new Date();
+      const overdue: RequiredResponseAuditItem[] = [];
+      const rows = selectRequiredResponses.all(
+        input.fromAgent ?? null,
+        input.fromAgent ?? null,
+        input.toAgent ?? null,
+        input.toAgent ?? null,
+      ) as MessageRow[];
+
+      for (const row of rows) {
+        const ageMs = now.getTime() - Date.parse(row.created_at);
+        if (!Number.isFinite(ageMs) || ageMs < input.olderThanMs) continue;
+        if (selectReplyEvent.get(row.id)) continue;
+
+        const state: RequiredResponseAuditState = row.status === 'new'
+          ? 'unacked'
+          : row.status === 'acked'
+            ? 'awaiting_response'
+            : 'closed_without_response';
+        overdue.push({ message: mapMessageRow(row), state, ageMs });
+      }
+
+      return {
+        generatedAt: now.toISOString(),
+        olderThanMs: input.olderThanMs,
+        overdue,
+        counts: {
+          unacked: overdue.filter((item) => item.state === 'unacked').length,
+          awaiting_response: overdue.filter((item) => item.state === 'awaiting_response').length,
+          closed_without_response: overdue.filter((item) => item.state === 'closed_without_response').length,
+        },
+      };
     },
 
     ackMessage(actorAgent, messageId) {
