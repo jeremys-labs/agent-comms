@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import fs from 'fs';
-import { createAgentMailStore, type AgentMailPriority, type AgentMailStatus, type AgentMailType } from './index.js';
+import { createAgentMailStore, type AgentMailMessage, type AgentMailPriority, type AgentMailStatus, type AgentMailType } from './index.js';
 import { validateSingleRecipient } from './recipients.js';
 
 interface ParsedArgs {
@@ -54,6 +54,15 @@ function getNonNegativeNumber(options: Map<string, string | boolean>, key: strin
   return parsed;
 }
 
+function getPositiveInteger(options: Map<string, string | boolean>, key: string, fallback: number): number {
+  const value = getOptional(options, key);
+  const parsed = value === undefined ? fallback : Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`--${key} must be a positive integer`);
+  }
+  return parsed;
+}
+
 function readBody(options: Map<string, string | boolean>): string {
   const body = getOptional(options, 'body');
   const bodyFile = getOptional(options, 'body-file');
@@ -64,6 +73,14 @@ function readBody(options: Map<string, string | boolean>): string {
 
 function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function printMessageLines(messages: AgentMailMessage[]): void {
+  for (const message of messages) {
+    process.stdout.write(
+      `${message.createdAt} ${message.id} ${message.fromAgent}->${message.toAgent} [${message.status}] ${message.subject}\n`,
+    );
+  }
 }
 
 function main(): void {
@@ -122,6 +139,20 @@ function main(): void {
           status: getOptional(options, 'status') as AgentMailStatus | undefined,
         });
         printJson(messages);
+        break;
+      }
+      case 'search': {
+        const messages = store.searchMessages({
+          query: getRequired(options, 'query'),
+          agent: getOptional(options, 'agent'),
+          status: getOptional(options, 'status') as AgentMailStatus | undefined,
+          limit: getPositiveInteger(options, 'limit', 20),
+        });
+        if (getBoolean(options, 'json')) {
+          printJson(messages);
+        } else {
+          printMessageLines(messages);
+        }
         break;
       }
       case 'show': {

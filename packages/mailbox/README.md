@@ -7,6 +7,7 @@ The package provides:
 - a SQLite-backed mailbox store
 - threaded messages through correlation IDs
 - message lifecycle operations: send, ack, reply, close
+- coordination search across message subjects, bodies, and metadata
 - a CLI exposed as `agent-mail`
 - prompt formatting helpers for runtime injection
 
@@ -43,8 +44,15 @@ agent-mail inbox --agent marcus --status new
 agent-mail ack --agent marcus --id msg_123
 agent-mail reply --agent marcus --id msg_123 --body "I own it."
 agent-mail close --agent marcus --id msg_123
+agent-mail search --query "knowledge-gap pending" --agent eli --limit 10 --json
 agent-mail audit-required --older-than-minutes 60 [--from eli] [--to marcus] [--fail-on-overdue]
 ```
+
+`search` matches all query terms across id, correlation id, sender, recipient,
+subject, body, project, and status. Results default newest-first with `--limit
+20`. Passing `--agent` scopes results to messages that agent sent or received;
+omitting it follows the current mailbox model and searches the fleet-open store.
+Use `--json` for machine-readable output.
 
 `audit-required` reports required-response messages that crossed the age
 threshold without a reply. It distinguishes unacknowledged delivery,

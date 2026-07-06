@@ -74,6 +74,13 @@ export interface ListAgentMailSentInput {
   status?: AgentMailStatus;
 }
 
+export interface SearchAgentMailInput {
+  query: string;
+  agent?: string;
+  status?: AgentMailStatus;
+  limit?: number;
+}
+
 export interface AgentMailMessageWithEvents {
   message: AgentMailMessage;
   events: AgentMailEvent[];
@@ -106,6 +113,7 @@ export interface AgentMailStore {
   reply(input: ReplyAgentMailInput): AgentMailMessage;
   listInbox(input: ListAgentMailInput): AgentMailMessage[];
   listSent(input: ListAgentMailSentInput): AgentMailMessage[];
+  searchMessages(input: SearchAgentMailInput): AgentMailMessage[];
   getMessage(messageId: string): AgentMailMessage | null;
   getMessageWithEvents(messageId: string): AgentMailMessageWithEvents | null;
   getThread(correlationId: string): AgentMailMessage[];
@@ -188,6 +196,25 @@ function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function searchTerms(query: string): string[] {
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function searchableText(row: MessageRow): string {
+  return [
+    row.id,
+    row.correlation_id,
+    row.from_agent,
+    row.to_agent,
+    row.type,
+    row.priority,
+    row.subject,
+    row.body_md,
+    row.related_project ?? '',
+    row.status,
+  ].join('\n').toLowerCase();
+}
+
 export function formatAgentMailForRuntime(message: AgentMailMessage): string {
   const lines = [
     `[Agent Mail] New message from ${message.fromAgent} | type=${message.type} | priority=${message.priority} | subject=${message.subject} | id=${message.id} | requires_response=${String(message.requiresResponse)}`,
@@ -268,6 +295,12 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
     ORDER BY created_at DESC, rowid DESC
   `);
   const selectThread = db.prepare('SELECT * FROM messages WHERE correlation_id = ? ORDER BY created_at ASC');
+  const selectSearchCandidates = db.prepare(`
+    SELECT * FROM messages
+    WHERE (? IS NULL OR from_agent = ? OR to_agent = ?)
+      AND (? IS NULL OR status = ?)
+    ORDER BY created_at DESC, rowid DESC
+  `);
   const selectEvents = db.prepare('SELECT * FROM message_events WHERE message_id = ? ORDER BY created_at ASC');
   const selectRequiredResponses = db.prepare(`
     SELECT * FROM messages
@@ -359,6 +392,31 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
 
     listSent(input) {
       return (selectSent.all(input.agent, input.status ?? null, input.status ?? null) as MessageRow[]).map(mapMessageRow);
+    },
+
+    searchMessages(input) {
+      const terms = searchTerms(input.query);
+      if (terms.length === 0) throw new Error('query must contain at least one search term');
+      const limit = input.limit ?? 20;
+      if (!Number.isInteger(limit) || limit <= 0) {
+        throw new Error('limit must be a positive integer');
+      }
+
+      const rows = selectSearchCandidates.all(
+        input.agent ?? null,
+        input.agent ?? null,
+        input.agent ?? null,
+        input.status ?? null,
+        input.status ?? null,
+      ) as MessageRow[];
+      const matches: AgentMailMessage[] = [];
+      for (const row of rows) {
+        const text = searchableText(row);
+        if (!terms.every((term) => text.includes(term))) continue;
+        matches.push(mapMessageRow(row));
+        if (matches.length >= limit) break;
+      }
+      return matches;
     },
 
     getMessage(messageId) {

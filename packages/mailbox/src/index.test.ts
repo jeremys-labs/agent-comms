@@ -92,6 +92,108 @@ describe('agent mail', () => {
     store.close();
   });
 
+  it('searchMessages regression: finds the pending knowledge-gap capture thread by subject/body', () => {
+    const store = createAgentMailStore(dbPath);
+    const stalled = store.send({
+      fromAgent: 'isla',
+      toAgent: 'eli',
+      type: 'question',
+      subject: 'Knowledge-gap reply-capture appears stalled since 06-06',
+      bodyMd: 'Every entry in isla/memory/knowledge_gap_log.md from 2026-06-07 through today shows Answer=_pending_.',
+      requiresResponse: true,
+    });
+    store.send({
+      fromAgent: 'isla',
+      toAgent: 'eli',
+      type: 'question',
+      subject: 'Guardian deck fact-check',
+      bodyMd: 'Different thread.',
+    });
+
+    const results = store.searchMessages({ query: 'knowledge-gap pending', agent: 'eli' });
+
+    expect(results.map((message) => message.id)).toEqual([stalled.id]);
+    expect(results[0].correlationId).toBe(stalled.correlationId);
+    store.close();
+  });
+
+  it('searchMessages matches metadata and body terms, newest-first with a limit', () => {
+    const store = createAgentMailStore(dbPath);
+    const older = store.send({
+      fromAgent: 'marcus',
+      toAgent: 'eli',
+      type: 'note',
+      subject: 'Scheduler smoke',
+      bodyMd: 'holiday guard live firer',
+    });
+    const newer = store.send({
+      fromAgent: 'isla',
+      toAgent: 'eli',
+      type: 'note',
+      subject: 'Holiday guard',
+      bodyMd: 'scheduler live firer smoke',
+    });
+
+    const results = store.searchMessages({ query: 'scheduler firer', agent: 'eli', limit: 1 });
+
+    expect(results.map((message) => message.id)).toEqual([newer.id]);
+    expect(results.some((message) => message.id === older.id)).toBe(false);
+    store.close();
+  });
+
+  it('searchMessages scopes agent results to messages they sent or received', () => {
+    const store = createAgentMailStore(dbPath);
+    const visible = store.send({
+      fromAgent: 'eli',
+      toAgent: 'marcus',
+      type: 'question',
+      subject: 'Runtime lifecycle',
+      bodyMd: 'status command',
+    });
+    store.send({
+      fromAgent: 'isla',
+      toAgent: 'zara',
+      type: 'question',
+      subject: 'Runtime lifecycle',
+      bodyMd: 'status command',
+    });
+
+    expect(store.searchMessages({ query: 'runtime lifecycle', agent: 'eli' }).map((message) => message.id)).toEqual([visible.id]);
+    expect(store.searchMessages({ query: 'runtime lifecycle', agent: 'nova' })).toEqual([]);
+    store.close();
+  });
+
+  it('searchMessages filters by status', () => {
+    const store = createAgentMailStore(dbPath);
+    const open = store.send({
+      fromAgent: 'isla',
+      toAgent: 'eli',
+      type: 'question',
+      subject: 'Deck review',
+      bodyMd: 'guardian deck',
+    });
+    const closed = store.send({
+      fromAgent: 'marcus',
+      toAgent: 'eli',
+      type: 'question',
+      subject: 'Deck review',
+      bodyMd: 'guardian deck',
+    });
+    store.closeMessage('eli', closed.id);
+
+    expect(store.searchMessages({ query: 'deck review', status: 'new' }).map((message) => message.id)).toEqual([open.id]);
+    expect(store.searchMessages({ query: 'deck review', status: 'closed' }).map((message) => message.id)).toEqual([closed.id]);
+    store.close();
+  });
+
+  it('searchMessages rejects empty queries and invalid limits', () => {
+    const store = createAgentMailStore(dbPath);
+
+    expect(() => store.searchMessages({ query: '   ' })).toThrow('query must contain at least one search term');
+    expect(() => store.searchMessages({ query: 'x', limit: 0 })).toThrow('limit must be a positive integer');
+    store.close();
+  });
+
   it('getMessageWithEvents returns null for unknown id', () => {
     const store = createAgentMailStore(dbPath);
     expect(store.getMessageWithEvents('msg_unknown')).toBeNull();
