@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   createTask,
   getTask,
@@ -11,6 +13,7 @@ import {
   handoffTask,
   blockTask,
   resolveTaskLedgerDir,
+  StaleTaskWriteError,
 } from './index.js';
 import { buildHandoffNotification } from './notify.js';
 
@@ -89,6 +92,87 @@ describe('updateTask', () => {
   it('throws for a missing id', () => {
     expect(() => updateTask('T_nope', { status: 'done' }, dir)).toThrow();
   });
+
+  it('rejects a stale compare-and-set write and preserves the winner (M1)', () => {
+    const t = createTask({ title: 'shared', owner: 'eli', createdBy: 'eli' }, dir);
+    // Two agents both read the same base version of a shared task.
+    const base = getTask(t.id, dir)!;
+    // First writer commits against the shared base.
+    const first = updateTask(t.id, { status: 'in_progress' }, dir, base.updatedAt);
+    expect(first.status).toBe('in_progress');
+    // Second writer used the same now-stale base — must be rejected, not clobber.
+    expect(() => updateTask(t.id, { status: 'blocked' }, dir, base.updatedAt)).toThrow(StaleTaskWriteError);
+    // On-disk state reflects the first writer only.
+    expect(getTask(t.id, dir)?.status).toBe('in_progress');
+  });
+
+  it('keeps last-writer-wins when no expected updatedAt is supplied', () => {
+    const t = createTask({ title: 'x', owner: 'eli', createdBy: 'eli' }, dir);
+    expect(updateTask(t.id, { status: 'in_progress' }, dir).status).toBe('in_progress');
+    expect(updateTask(t.id, { status: 'done' }, dir).status).toBe('done');
+  });
+
+  it('leaves no lock file behind after a successful update', () => {
+    const t = createTask({ title: 'x', owner: 'eli', createdBy: 'eli' }, dir);
+    updateTask(t.id, { status: 'in_progress' }, dir);
+    const stray = fs.readdirSync(path.join(dir, 'tasks')).filter((f) => f.endsWith('.lock'));
+    expect(stray).toEqual([]);
+  });
+
+  it('breaks a stale lock left by a crashed holder', () => {
+    const t = createTask({ title: 'x', owner: 'eli', createdBy: 'eli' }, dir);
+    const lockPath = path.join(dir, 'tasks', `${t.id}.json.lock`);
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 999999, ts: 0 }));
+    // Backdate the lock well past the stale threshold (10s).
+    const old = Date.now() / 1000 - 60;
+    fs.utimesSync(lockPath, old, old);
+    // Should break the stale lock and complete rather than hang.
+    expect(updateTask(t.id, { status: 'in_progress' }, dir).status).toBe('in_progress');
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('serializes concurrent same-base updates across processes: exactly one wins (M1 lock)', async () => {
+    const t = createTask({ title: 'shared', owner: 'eli', createdBy: 'eli' }, dir);
+    const base = getTask(t.id, dir)!.updatedAt;
+
+    const modulePath = fileURLToPath(new URL('./index.ts', import.meta.url));
+    // repo root is four levels up from packages/task-ledger/src
+    const tsxBin = path.resolve(path.dirname(modulePath), '../../../node_modules/.bin/tsx');
+    const startFile = path.join(dir, 'go');
+    const workerPath = path.join(dir, 'lock-worker.mjs');
+    fs.writeFileSync(
+      workerPath,
+      [
+        `import fs from 'node:fs';`,
+        `const [modulePath, taskDir, id, base, startFile] = process.argv.slice(2);`,
+        `const { updateTask, StaleTaskWriteError } = await import(modulePath);`,
+        `while (!fs.existsSync(startFile)) {}`, // barrier: all workers contend at once
+        `try { updateTask(id, { status: 'in_progress' }, taskDir, base); process.stdout.write('OK'); }`,
+        `catch (e) { process.stdout.write(e instanceof StaleTaskWriteError ? 'STALE' : 'ERR:' + e.message); }`,
+      ].join('\n'),
+    );
+
+    const N = 4;
+    const runWorker = () =>
+      new Promise<string>((resolve, reject) => {
+        const child = spawn(tsxBin, [workerPath, modulePath, dir, t.id, base, startFile]);
+        let out = '';
+        child.stdout.on('data', (d) => (out += String(d)));
+        child.stderr.on('data', (d) => (out += ''));
+        child.on('error', reject);
+        child.on('close', () => resolve(out));
+      });
+
+    const workers = Array.from({ length: N }, runWorker);
+    // Give the children time to spawn and reach the barrier, then release them.
+    await new Promise((r) => setTimeout(r, 1500));
+    fs.writeFileSync(startFile, '1');
+    const results = await Promise.all(workers);
+
+    expect(results.filter((r) => r === 'OK')).toHaveLength(1);
+    expect(results.filter((r) => r === 'STALE')).toHaveLength(N - 1);
+    expect(getTask(t.id, dir)?.status).toBe('in_progress');
+  }, 30_000);
 });
 
 describe('listTasks', () => {

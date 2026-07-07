@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { redactForProject } from './audit.js';
 import { fetchAgentCard, getTask, sendMessage } from './client.js';
 import { tokenFingerprint } from './credentials.js';
@@ -204,6 +204,40 @@ describe('client', () => {
     const result = await getTask({ peer: samplePeer(), token: 'fake', taskId: 'tsk-1', fetchImpl });
     expect(result.state).toBe('failed');
     expect(result.text).toBe('Task timed out waiting for agent reply');
+  });
+
+  it('getTask logs when a peer reports an unrecognized state', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const fetchImpl = fakeFetch(() =>
+        new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: 2, result: { id: 'tsk-1', status: { state: 'garbled' } } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+      const result = await getTask({ peer: samplePeer(), token: 'fake', taskId: 'tsk-1', fetchImpl });
+      expect(result.state).toBe('unknown');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('garbled'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('getTask stays quiet when no state is present', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const fetchImpl = fakeFetch(() =>
+        new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: 2, result: { id: 'tsk-1', status: {} } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+      const result = await getTask({ peer: samplePeer(), token: 'fake', taskId: 'tsk-1', fetchImpl });
+      expect(result.state).toBe('unknown');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('fetchAgentCard hits the well-known path', async () => {

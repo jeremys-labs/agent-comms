@@ -83,6 +83,66 @@ function atomicWriteJson(filePath: string, value: unknown): void {
   fs.renameSync(tmp, filePath);
 }
 
+// A lock held for longer than this is treated as abandoned by a crashed holder.
+// A real update (read + one atomic write, no I/O waits) completes in well under
+// a millisecond, so 10s is comfortably past any legitimate hold.
+const LOCK_STALE_MS = 10_000;
+
+/** Synchronous sleep — the ledger API is sync and the lock spin must not busy-
+ * burn a core while a peer holds the lock. */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Break a lock only if it is older than LOCK_STALE_MS. The stat-before-unlink
+ * guard means a freshly re-acquired lock (fresh mtime) is never removed, so two
+ * racers breaking the same stale lock can't clobber the winner's new lock. */
+function breakStaleLock(lockPath: string): void {
+  try {
+    if (Date.now() - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
+      fs.unlinkSync(lockPath);
+    }
+  } catch {
+    // lock vanished between EEXIST and stat — fine, the retry will re-open
+  }
+}
+
+/**
+ * Run `fn` while holding an exclusive per-task lock, so the compare-and-set
+ * read and the write are atomic against other processes. Without this, two
+ * writers could both pass the updatedAt check and then both rename, silently
+ * losing one transition. Uses O_EXCL create + rename semantics; a crashed
+ * holder's stale lock is broken after LOCK_STALE_MS.
+ */
+function withTaskLock<T>(dir: string, id: string, fn: () => T): T {
+  const lockPath = `${taskPath(dir, id)}.lock`;
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  const deadline = Date.now() + LOCK_STALE_MS * 2;
+  let fd: number;
+  for (;;) {
+    try {
+      fd = fs.openSync(lockPath, 'wx'); // O_CREAT | O_EXCL — fails if held
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      breakStaleLock(lockPath);
+      if (Date.now() > deadline) throw new Error(`Timed out acquiring task lock for ${id}`);
+      sleepSync(20);
+    }
+  }
+  try {
+    fs.writeSync(fd, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+    return fn();
+  } finally {
+    fs.closeSync(fd);
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      // already removed (e.g. broken as stale by a peer) — nothing to do
+    }
+  }
+}
+
 export function createTask(input: CreateTaskInput, dir = resolveTaskLedgerDir()): TaskRecord {
   const ts = nowIso();
   const task: TaskRecord = {
@@ -135,12 +195,49 @@ export function listTasks(filter: ListFilter = {}, dir = resolveTaskLedgerDir())
     .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
 }
 
-export function updateTask(id: string, patch: TaskPatch, dir = resolveTaskLedgerDir()): TaskRecord {
-  const existing = getTask(id, dir);
-  if (!existing) throw new Error(`Task not found: ${id}`);
-  const updated: TaskRecord = { ...existing, ...patch, updatedAt: nowIso() };
-  atomicWriteJson(taskPath(dir, id), updated);
-  return updated;
+/** Thrown when a compare-and-set updateTask sees the on-disk record has moved
+ * on from the base version the caller read — i.e. a concurrent same-task write
+ * would silently clobber it. */
+export class StaleTaskWriteError extends Error {
+  constructor(id: string, expected: string, actual: string) {
+    super(`Stale update for task ${id}: expected updatedAt ${expected}, found ${actual}`);
+    this.name = 'StaleTaskWriteError';
+  }
+}
+
+/**
+ * Patch a task. When `expectedUpdatedAt` is supplied, the write is compare-and-
+ * set: it is rejected (StaleTaskWriteError) if the stored `updatedAt` no longer
+ * matches, so two agents transitioning the SAME task can't silently overwrite
+ * each other (the P1 concurrency risk the header comment warns about). Omitting
+ * it keeps the original last-writer-wins behaviour for single-writer callers.
+ *
+ * The read-check-write runs under a per-task lock so the compare-and-set is
+ * atomic across processes — otherwise two writers could both pass the check and
+ * both write, losing a transition.
+ */
+export function updateTask(
+  id: string,
+  patch: TaskPatch,
+  dir = resolveTaskLedgerDir(),
+  expectedUpdatedAt?: string,
+): TaskRecord {
+  return withTaskLock(dir, id, () => {
+    const existing = getTask(id, dir);
+    if (!existing) throw new Error(`Task not found: ${id}`);
+    if (expectedUpdatedAt !== undefined && existing.updatedAt !== expectedUpdatedAt) {
+      throw new StaleTaskWriteError(id, expectedUpdatedAt, existing.updatedAt);
+    }
+    // updatedAt doubles as the compare-and-set token, so it must strictly advance
+    // even for two writes that land within the same millisecond.
+    let updatedAt = nowIso();
+    if (updatedAt <= existing.updatedAt) {
+      updatedAt = new Date(new Date(existing.updatedAt).getTime() + 1).toISOString();
+    }
+    const updated: TaskRecord = { ...existing, ...patch, updatedAt };
+    atomicWriteJson(taskPath(dir, id), updated);
+    return updated;
+  });
 }
 
 export function closeTask(id: string, outcome: 'done' | 'killed', dir = resolveTaskLedgerDir()): TaskRecord {

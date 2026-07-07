@@ -74,6 +74,9 @@ function extractState(rpcResult: unknown): A2ATaskState {
   if (!direct) return 'unknown';
   if ((A2A_TERMINAL_STATES as ReadonlySet<string>).has(direct)) return direct as A2ATaskState;
   if (direct === 'submitted' || direct === 'working') return direct;
+  // A state string we don't map collapses to non-terminal 'unknown' and then
+  // polls uselessly to expiry — surface it so a new peer state is noticed.
+  console.warn(`[a2a-client] peer reported unrecognized task state "${direct}"; treating as unknown`);
   return 'unknown';
 }
 
