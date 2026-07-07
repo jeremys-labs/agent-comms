@@ -144,6 +144,7 @@ export function createEventInboxStore(dbPath: string): EventInboxStore {
       source, source_event_id, event_type, received_at, occurred_at, owner_agent,
       route_key, priority, risk, status, dedupe_key, summary, payload_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)
+    ON CONFLICT(dedupe_key) DO NOTHING
   `);
   const selectByDedupe = db.prepare('SELECT * FROM event_inbox WHERE dedupe_key = ?');
   const selectByIdAndAgent = db.prepare('SELECT * FROM event_inbox WHERE id = ? AND owner_agent = ?');
@@ -170,10 +171,10 @@ export function createEventInboxStore(dbPath: string): EventInboxStore {
   return {
     emitEvent(input) {
       const dedupeKey = input.dedupeKey ?? `${input.source}:${input.eventType}:${input.sourceEventId}`;
-      const existing = selectByDedupe.get(dedupeKey) as EventInboxRow | undefined;
-      if (existing) return { ...rowToRecord(existing), duplicate: true };
-
-      insertEvent.run(
+      // Insert-or-ignore atomically: a concurrent duplicate webhook is deduped
+      // by the DB (changes === 0) instead of racing a check-then-insert into a
+      // SQLITE_CONSTRAINT 500. Re-select always returns the canonical row.
+      const info = insertEvent.run(
         input.source,
         input.sourceEventId,
         input.eventType,
@@ -189,18 +190,24 @@ export function createEventInboxStore(dbPath: string): EventInboxStore {
       );
 
       const row = selectByDedupe.get(dedupeKey) as EventInboxRow;
-      return { ...rowToRecord(row), duplicate: false };
+      return { ...rowToRecord(row), duplicate: info.changes === 0 };
     },
     listInbox(options) {
       return (selectInbox.all(options.agent, options.status ?? 'new') as EventInboxRow[]).map(rowToRecord);
     },
     ackEvent(agent, id) {
-      ackById.run(nowIso(), id, agent);
-      return getOwnedRecord(agent, id);
+      const info = ackById.run(nowIso(), id, agent);
+      const record = getOwnedRecord(agent, id);
+      // changes === 0 on an owned row means it was not in 'new' state — an
+      // already-acked/closed event must not report a silent success.
+      if (info.changes === 0) throw new Error(`event ${id} is not ackable (status=${record.status})`);
+      return record;
     },
     closeEvent(agent, id, outcome) {
-      closeById.run(nowIso(), outcome === undefined ? null : JSON.stringify(outcome), id, agent);
-      return getOwnedRecord(agent, id);
+      const info = closeById.run(nowIso(), outcome === undefined ? null : JSON.stringify(outcome), id, agent);
+      const record = getOwnedRecord(agent, id);
+      if (info.changes === 0) throw new Error(`event ${id} is not closable (status=${record.status})`);
+      return record;
     },
     close() {
       db.close();
@@ -291,8 +298,10 @@ export function verifyHomeAssistantToken(authHeader: string | undefined, tokenHe
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
-export function homeAssistantDeliveryId(rawBody: Buffer): string {
-  return crypto.createHash('sha256').update(rawBody).digest('hex');
+export function homeAssistantDeliveryId(rawBody: Buffer, receivedAt: string = nowIso()): string {
+  // No upstream delivery id, so fold in the receipt time: two byte-identical but
+  // genuinely distinct events must not collapse into one dedupe key.
+  return crypto.createHash('sha256').update(rawBody).update(receivedAt).digest('hex');
 }
 
 function homeAssistantEventType(payload: any): string {

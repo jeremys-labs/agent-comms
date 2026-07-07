@@ -63,6 +63,52 @@ describe('event inbox', () => {
     expect(inbox.ackEvent('zara', first.id)).toMatchObject({ status: 'acked' });
   });
 
+  it('treats a re-delivered event as a duplicate without a constraint error', () => {
+    const inbox = makeStore();
+    const base = {
+      source: 'home_assistant',
+      sourceEventId: 'evt-1',
+      eventType: 'battery_low',
+      ownerAgent: 'hank',
+      routeKey: 'home-assistant:battery_low:sensor',
+      summary: 'first delivery',
+      payload: { level: 18 },
+    };
+    const first = inbox.emitEvent(base);
+    // Same dedupe key, different payload — the storage layer must dedupe via the
+    // DB (INSERT ... ON CONFLICT), never surface SQLITE_CONSTRAINT as a 500.
+    const second = inbox.emitEvent({ ...base, summary: 'redelivery', payload: { level: 12 } });
+    expect(second).toMatchObject({ id: first.id, duplicate: true });
+    expect(inbox.listInbox({ agent: 'hank' })).toHaveLength(1);
+  });
+
+  it('does not let ack or close silently succeed a second time', () => {
+    const inbox = makeStore();
+    const e = inbox.emitEvent({
+      source: 'github',
+      sourceEventId: 'd-9',
+      eventType: 'issues',
+      ownerAgent: 'zara',
+      routeKey: 'github:repo:issues',
+      summary: 's',
+      payload: {},
+    });
+    expect(inbox.ackEvent('zara', e.id).status).toBe('acked');
+    // Re-acking an already-acked event must not report success.
+    expect(() => inbox.ackEvent('zara', e.id)).toThrow(/not ackable/);
+    expect(inbox.closeEvent('zara', e.id, { ok: true }).status).toBe('closed');
+    // Re-closing a closed event must not report success.
+    expect(() => inbox.closeEvent('zara', e.id)).toThrow(/not closable/);
+  });
+
+  it('folds a receipt time into the Home Assistant delivery id so identical bodies stay distinct', () => {
+    const body = Buffer.from(JSON.stringify({ event_type: 'motion' }));
+    const a = homeAssistantDeliveryId(body, '2026-07-07T00:00:00.000Z');
+    const b = homeAssistantDeliveryId(body, '2026-07-07T00:00:01.000Z');
+    expect(a).toHaveLength(64);
+    expect(a).not.toBe(b);
+  });
+
   it('verifies and normalizes GitHub events for Zara', () => {
     const body = Buffer.from(JSON.stringify({ action: 'opened' }));
     expect(verifyGitHubSignature(body, sign(body, 'secret'), 'secret')).toBe(true);
