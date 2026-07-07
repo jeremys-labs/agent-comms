@@ -63,6 +63,16 @@ describe('DiscordGatewayClient crash hardening', () => {
     client.close();
   });
 
+  it('captures the bot self id from the READY payload (P2)', () => {
+    const client = new DiscordGatewayClient('token', () => {});
+    expect(client.selfUserId).toBeUndefined();
+
+    (client as any).handlePayload({ op: 0, t: 'READY', d: { user: { id: 'bot-self-id' } } });
+
+    expect(client.selfUserId).toBe('bot-self-id');
+    client.close();
+  });
+
   it('stops reconnecting after a fatal close code (M2)', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const client = new DiscordGatewayClient('token', () => {});

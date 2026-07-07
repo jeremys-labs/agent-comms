@@ -54,6 +54,12 @@ export class DiscordGatewayClient {
   private shouldReconnect = true;
   private reconnectAttempts = 0;
   private heartbeatAcked = true;
+  private selfUserIdValue: string | undefined;
+
+  /** The bot's own user id, learned from the gateway READY payload. */
+  get selfUserId(): string | undefined {
+    return this.selfUserIdValue;
+  }
 
   constructor(
     private readonly token: string,
@@ -167,7 +173,10 @@ export class DiscordGatewayClient {
     }
 
     if (payload.op === 0) {
-      if (payload.t === 'READY') this.reconnectAttempts = 0;
+      if (payload.t === 'READY') {
+        this.reconnectAttempts = 0;
+        this.selfUserIdValue = payload.d?.user?.id ?? this.selfUserIdValue;
+      }
       if (payload.t === 'MESSAGE_CREATE') {
         try {
           this.onMessageCreate(payload.d as DiscordMessageEvent);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { routeDiscordMessage, routeDiscordMessageForBinding, shouldIgnoreDiscordMessage } from './bridge-router.js';
 import { discordMessage1508298833619058848 } from './fixtures/discord-message-1508298833619058848.js';
 
@@ -177,6 +177,50 @@ describe('discord bridge router', () => {
       mentions: [{ id: 'bot-user' }],
     });
     expect(mentioned?.agentKey).toBe('marcus');
+  });
+
+  it('enforces requireMention on a derived binding using the threaded self id (P2)', () => {
+    // Derived bindings (from access.json) carry no selfUserId of their own.
+    const derivedBinding = {
+      name: 'zara',
+      tokenEnvVar: 'DISCORD_BOT_TOKEN',
+      subscriptions: [{ agentKey: 'zara', channelId: '111', requireMention: true }],
+    };
+    const eventBase = {
+      channel_id: '111',
+      content: 'ping',
+      author: { id: 'user1', username: 'Jeremy' },
+    };
+
+    const unmentioned = routeDiscordMessageForBinding(
+      derivedBinding,
+      { ...eventBase, id: 'd-nomention', mentions: [] },
+      'bot-self-id',
+    );
+    expect(unmentioned).toBeNull();
+
+    const mentioned = routeDiscordMessageForBinding(
+      derivedBinding,
+      { ...eventBase, id: 'd-mention', mentions: [{ id: 'bot-self-id' }] },
+      'bot-self-id',
+    );
+    expect(mentioned?.agentKey).toBe('zara');
+  });
+
+  it('fails closed when requireMention is set but no self id is available (P2)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const routed = routeDiscordMessageForBinding(
+      {
+        name: 'zara',
+        tokenEnvVar: 'DISCORD_BOT_TOKEN',
+        subscriptions: [{ agentKey: 'zara', channelId: '111', requireMention: true }],
+      },
+      { id: 'd-noself', channel_id: '111', content: 'ping', author: { id: 'user1', username: 'Jeremy' }, mentions: [{ id: 'bot-self-id' }] },
+      // no selfUserId threaded
+    );
+    expect(routed).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('preserves referenced message metadata for downstream reply capture', () => {

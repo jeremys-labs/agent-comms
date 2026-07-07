@@ -309,8 +309,8 @@ if (readyBindings.length === 0) {
 for (const binding of readyBindings) {
   const token = process.env[binding.tokenEnvVar]!;
 
-  const client = new DiscordGatewayClient(token, (event) => {
-    const routed = routeDiscordMessageForBinding(binding, event);
+  const client: DiscordGatewayClient = new DiscordGatewayClient(token, (event) => {
+    const routed = routeDiscordMessageForBinding(binding, event, client.selfUserId);
     if (!routed) return;
 
     const key = subscriptionKey(binding, routed);
