@@ -25,7 +25,8 @@ export function loadDiscordBridgeConfig(contentRoot: string): DiscordBridgeConfi
     groups?: Record<string, { requireMention?: boolean }>;
   };
 
-  const groupIds = Object.keys(access.groups ?? {});
+  const groups = access.groups ?? {};
+  const groupIds = Object.keys(groups);
   if (groupIds.length === 0) return null;
 
   const derivedBinding: DiscordBridgeBinding = {
@@ -34,6 +35,7 @@ export function loadDiscordBridgeConfig(contentRoot: string): DiscordBridgeConfi
     subscriptions: groupIds.map((channelId) => ({
       agentKey,
       channelId,
+      ...(groups[channelId]?.requireMention ? { requireMention: true } : {}),
     })),
   };
 
@@ -55,4 +57,20 @@ export function normalizeDiscordBridgeBindings(config: DiscordBridgeConfig): Dis
     selfUserId: config.selfUserId,
     subscriptions: config.subscriptions,
   }];
+}
+
+export function partitionBindingsByToken(
+  bindings: DiscordBridgeBinding[],
+  env: NodeJS.ProcessEnv,
+): { ready: DiscordBridgeBinding[]; missing: Array<{ name: string; tokenEnvVar: string }> } {
+  const ready: DiscordBridgeBinding[] = [];
+  const missing: Array<{ name: string; tokenEnvVar: string }> = [];
+  for (const binding of bindings) {
+    if (env[binding.tokenEnvVar]) {
+      ready.push(binding);
+    } else {
+      missing.push({ name: binding.name, tokenEnvVar: binding.tokenEnvVar });
+    }
+  }
+  return { ready, missing };
 }

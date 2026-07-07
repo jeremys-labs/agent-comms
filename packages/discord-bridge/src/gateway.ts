@@ -4,8 +4,10 @@ import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
 import { resolveContentRoot, ensureBridgeDirs } from './paths.js';
-import { loadDiscordBridgeConfig, normalizeDiscordBridgeBindings } from './bridge-config.js';
+import { loadDiscordBridgeConfig, normalizeDiscordBridgeBindings, partitionBindingsByToken } from './bridge-config.js';
 import { DiscordGatewayClient } from './services/discord-gateway-client.js';
+import { parseRetryAfterMs, splitDiscordContent } from './services/discord-send.js';
+import { makeSocketHealthCheck } from './services/socket-heal.js';
 import { appendInboxEntry, hasSeen, markSeen } from './services/bridge-store.js';
 import { routeDiscordMessageForBinding } from './services/bridge-router.js';
 import { backfillBindingMessages, subscriptionKey } from './services/discord-rest-backfill.js';
@@ -118,11 +120,10 @@ function buildDiscordMultipartBody(text: string | undefined, filePaths: string[]
   };
 }
 
-function sendDiscordMessage(token: string, channelId: string, text: string | undefined, files: string[], replyTo?: string): Promise<{ id: string }> {
+type DiscordRequestBody = { body: Buffer; contentType: string };
+
+function rawDiscordPost(token: string, channelId: string, requestBody: DiscordRequestBody): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; data: string }> {
   return new Promise((resolve, reject) => {
-    const requestBody = files.length > 0
-      ? buildDiscordMultipartBody(text, files, replyTo)
-      : { body: buildDiscordJsonBody(text, replyTo), contentType: 'application/json' };
     const req = https.request({
       method: 'POST',
       host: 'discord.com',
@@ -137,21 +138,55 @@ function sendDiscordMessage(token: string, channelId: string, text: string | und
       let data = '';
       res.setEncoding('utf8');
       res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        if ((res.statusCode ?? 500) < 200 || (res.statusCode ?? 500) >= 300) {
-          reject(new Error(`Discord send failed ${res.statusCode}: ${data}`));
-          return;
-        }
-        try {
-          resolve(JSON.parse(data) as { id: string });
-        } catch (error) {
-          reject(error);
-        }
-      });
+      res.on('end', () => resolve({ statusCode: res.statusCode ?? 500, headers: res.headers, data }));
     });
     req.on('error', reject);
     req.end(requestBody.body);
   });
+}
+
+async function postDiscordMessage(token: string, channelId: string, requestBody: DiscordRequestBody): Promise<{ id: string }> {
+  let res = await rawDiscordPost(token, channelId, requestBody);
+  if (res.statusCode === 429) {
+    const retryMs = parseRetryAfterMs(res.headers, res.data);
+    if (retryMs !== null) {
+      console.error(`[discord-bridge] rate limited (429), retrying after ${retryMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, retryMs));
+      res = await rawDiscordPost(token, channelId, requestBody);
+    }
+  }
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw new Error(`Discord send failed ${res.statusCode}: ${res.data}`);
+  }
+  return JSON.parse(res.data) as { id: string };
+}
+
+async function sendDiscordMessage(token: string, channelId: string, text: string | undefined, files: string[], replyTo?: string): Promise<{ id: string }> {
+  const parts = text ? splitDiscordContent(text) : [];
+  let firstSent = false;
+  const takeReply = (): string | undefined => {
+    const value = firstSent ? undefined : replyTo;
+    firstSent = true;
+    return value;
+  };
+
+  let lastId = '';
+  if (files.length > 0) {
+    // Leading text chunks go out as plain messages; the final message carries the files.
+    for (const part of parts.slice(0, Math.max(0, parts.length - 1))) {
+      const sent = await postDiscordMessage(token, channelId, { body: buildDiscordJsonBody(part, takeReply()), contentType: 'application/json' });
+      lastId = sent.id;
+    }
+    const finalText = parts.length > 0 ? parts[parts.length - 1] : undefined;
+    const sent = await postDiscordMessage(token, channelId, buildDiscordMultipartBody(finalText, files, takeReply()));
+    return { id: sent.id };
+  }
+
+  for (const part of parts) {
+    const sent = await postDiscordMessage(token, channelId, { body: buildDiscordJsonBody(part, takeReply()), contentType: 'application/json' });
+    lastId = sent.id;
+  }
+  return { id: lastId };
 }
 
 function readJsonBody(req: http.IncomingMessage): Promise<OutboundRequest> {
@@ -212,19 +247,34 @@ const outboundServer = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, id: sent.id, bindingName: binding.name }));
   } catch (error) {
+    // Delivery-failure log. The shared delivery-health logger referenced in the
+    // harness review lives in mcc-tmux, not this repo, so record to stderr here.
+    console.error('[discord-bridge] outbound delivery failed:', error);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: String(error) }));
   }
 });
 
-try {
-  fs.unlinkSync(socketPath);
-} catch {}
+function listenOnSocket(): void {
+  try {
+    fs.unlinkSync(socketPath);
+  } catch {}
+  outboundServer.listen(socketPath, () => {
+    fs.chmodSync(socketPath, 0o600);
+    console.log(`[discord-bridge] outbound HTTP listening on ${socketPath}`);
+  });
+}
 
-outboundServer.listen(socketPath, () => {
-  fs.chmodSync(socketPath, 0o600);
-  console.log(`[discord-bridge] outbound HTTP listening on ${socketPath}`);
+listenOnSocket();
+
+// Self-heal: if the socket file is removed out from under us (e.g. `rm -f /tmp/*`),
+// re-bind instead of going silently dark until a manual restart.
+const socketHealthCheck = makeSocketHealthCheck(socketPath, () => {
+  console.error(`[discord-bridge] socket ${socketPath} disappeared — re-listening`);
+  outboundServer.close(() => listenOnSocket());
 });
+const socketHealthIntervalMs = Number(process.env.DISCORD_BRIDGE_SOCKET_WATCH_MS ?? '5000');
+const socketHealthTimer = socketHealthIntervalMs > 0 ? setInterval(socketHealthCheck, socketHealthIntervalMs) : null;
 
 async function backfillBinding(binding: typeof bindings[number], token: string): Promise<void> {
   try {
@@ -245,12 +295,19 @@ async function backfillBinding(binding: typeof bindings[number], token: string):
   }
 }
 
-for (const binding of bindings) {
-  const token = process.env[binding.tokenEnvVar];
-  if (!token) {
-    console.error(`[discord-bridge] missing Discord token in env var ${binding.tokenEnvVar} for binding ${binding.name}`);
-    process.exit(1);
-  }
+const { ready: readyBindings, missing: missingBindings } = partitionBindingsByToken(bindings, process.env);
+
+for (const skipped of missingBindings) {
+  console.error(`[discord-bridge] skipping binding ${skipped.name}: missing Discord token in env var ${skipped.tokenEnvVar}`);
+}
+
+if (readyBindings.length === 0) {
+  console.error('[discord-bridge] no bindings have a Discord token configured — nothing to start');
+  process.exit(1);
+}
+
+for (const binding of readyBindings) {
+  const token = process.env[binding.tokenEnvVar]!;
 
   const client = new DiscordGatewayClient(token, (event) => {
     const routed = routeDiscordMessageForBinding(binding, event);
@@ -286,16 +343,23 @@ for (const binding of bindings) {
   }
 }
 
-process.on('SIGINT', () => {
-  for (const timer of backfillTimers) clearInterval(timer);
-  outboundServer.close();
-  for (const client of clients) client.close();
-  process.exit(0);
+console.log(`[discord-bridge] startup: ${readyBindings.length} binding(s) started, ${missingBindings.length} skipped${missingBindings.length > 0 ? ` (${missingBindings.map((skipped) => skipped.name).join(', ')})` : ''}`);
+
+// One bad payload or one agent's fs error must never take the whole fleet down.
+process.on('uncaughtException', (error) => {
+  console.error('[discord-bridge] uncaught exception — keeping siblings alive:', error);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[discord-bridge] unhandled rejection — keeping siblings alive:', reason);
 });
 
-process.on('SIGTERM', () => {
+function shutdown(): void {
   for (const timer of backfillTimers) clearInterval(timer);
+  if (socketHealthTimer) clearInterval(socketHealthTimer);
   outboundServer.close();
   for (const client of clients) client.close();
   process.exit(0);
-});
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
