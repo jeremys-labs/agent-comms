@@ -79,14 +79,22 @@ Environment:
 Types: question, decision_request, handoff, status, artifact, note
 `;
 
-function main(): void {
-  const { command, options } = parseArgs(process.argv.slice(2));
+function isHelpRequest(argv: string[]): boolean {
+  return argv.length === 0 || argv.some((arg) => arg === 'help' || arg === '--help' || arg === '-h');
+}
 
-  if (command === 'help' || command === '' || getBoolean(options, 'help')) {
+function main(): void {
+  const argv = process.argv.slice(2);
+
+  // Detect help before opening the store: `--help`/`-h` land in the command
+  // position, so the store must not be constructed (its AGENT_MAIL_DIR guard
+  // would turn a plain help request into an env-var error).
+  if (isHelpRequest(argv)) {
     process.stdout.write(USAGE);
     return;
   }
 
+  const { command, options } = parseArgs(argv);
   const store = createAgentMailStore();
 
   try {
