@@ -57,8 +57,36 @@ function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+const USAGE = `agent-mail — durable local mailbox for agent-to-agent coordination
+
+Usage: agent-mail <command> [options]
+
+Commands:
+  send    --from <agent> --to <agent> --type <type> --subject <s> (--body <md> | --body-file <path>)
+          [--project <p>] [--priority low|normal|high] [--requires-response]
+  inbox   --agent <agent> [--status new|acked|closed]   (closed excluded unless --status given)
+  ack     --agent <agent> --id <messageId>
+  reply   --agent <agent> --id <messageId> (--body <md> | --body-file <path>)
+          [--subject <s>] [--priority low|normal|high] [--requires-response]
+  close   --agent <agent> --id <messageId>
+  thread  (--id <messageId> | --correlation-id <corrId>)
+  help    Show this help
+
+Environment:
+  AGENT_MAIL_DIR            Directory holding the shared agent_mail.db (required)
+  AGENT_MAIL_ALLOW_DEFAULT  Set to 1 to opt into the default dir when AGENT_MAIL_DIR is unset
+
+Types: question, decision_request, handoff, status, artifact, note
+`;
+
 function main(): void {
   const { command, options } = parseArgs(process.argv.slice(2));
+
+  if (command === 'help' || command === '' || getBoolean(options, 'help')) {
+    process.stdout.write(USAGE);
+    return;
+  }
+
   const store = createAgentMailStore();
 
   try {
