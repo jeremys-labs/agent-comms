@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -9,6 +10,16 @@ export type AgentMailType = 'question' | 'decision_request' | 'handoff' | 'statu
 export type AgentMailPriority = 'low' | 'normal' | 'high';
 export type AgentMailStatus = 'new' | 'acked' | 'closed';
 export type AgentMailEventType = 'created' | 'acked' | 'replied' | 'closed';
+
+const AGENT_MAIL_TYPES: readonly AgentMailType[] = [
+  'question',
+  'decision_request',
+  'handoff',
+  'status',
+  'artifact',
+  'note',
+];
+const AGENT_MAIL_PRIORITIES: readonly AgentMailPriority[] = ['low', 'normal', 'high'];
 
 export interface AgentMailLinkInput {
   label: string;
@@ -112,7 +123,14 @@ function ensureDir(dirPath: string): void {
 }
 
 export function resolveAgentMailDir(): string {
-  return process.env.AGENT_MAIL_DIR ?? DEFAULT_AGENT_MAIL_DIR;
+  const configured = process.env.AGENT_MAIL_DIR;
+  if (configured) return configured;
+  if (process.env.AGENT_MAIL_ALLOW_DEFAULT === '1') return DEFAULT_AGENT_MAIL_DIR;
+  throw new Error(
+    `AGENT_MAIL_DIR is not set. Refusing to fall back to ${DEFAULT_AGENT_MAIL_DIR}, ` +
+      'which silently diverges from the shared mailbox. Set AGENT_MAIL_DIR to the ' +
+      'shared mailbox directory, or set AGENT_MAIL_ALLOW_DEFAULT=1 to opt into the default.',
+  );
 }
 
 export function resolveAgentMailDbPath(baseDir = resolveAgentMailDir()): string {
@@ -150,7 +168,21 @@ function mapEventRow(row: EventRow): AgentMailEvent {
 }
 
 function createId(prefix: string): string {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}_${crypto.randomUUID()}`;
+}
+
+function validateType(type: AgentMailType): AgentMailType {
+  if (!AGENT_MAIL_TYPES.includes(type)) {
+    throw new Error(`Invalid type: ${type}. Expected one of ${AGENT_MAIL_TYPES.join(', ')}.`);
+  }
+  return type;
+}
+
+function validatePriority(priority: AgentMailPriority): AgentMailPriority {
+  if (!AGENT_MAIL_PRIORITIES.includes(priority)) {
+    throw new Error(`Invalid priority: ${priority}. Expected one of ${AGENT_MAIL_PRIORITIES.join(', ')}.`);
+  }
+  return priority;
 }
 
 export function formatAgentMailForRuntime(message: AgentMailMessage): string {
@@ -224,10 +256,12 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
   const selectMessage = db.prepare('SELECT * FROM messages WHERE id = ?');
   const selectInbox = db.prepare(`
     SELECT * FROM messages
-    WHERE to_agent = ? AND (? IS NULL OR status = ?)
-    ORDER BY created_at ASC
+    WHERE to_agent = ?
+      AND (? IS NULL OR status = ?)
+      AND (? IS NOT NULL OR status != 'closed')
+    ORDER BY created_at ASC, rowid ASC
   `);
-  const selectThread = db.prepare('SELECT * FROM messages WHERE correlation_id = ? ORDER BY created_at ASC');
+  const selectThread = db.prepare('SELECT * FROM messages WHERE correlation_id = ? ORDER BY created_at ASC, rowid ASC');
   const selectEvents = db.prepare('SELECT * FROM message_events WHERE message_id = ? ORDER BY created_at ASC');
   const updateAck = db.prepare(`
     UPDATE messages
@@ -251,8 +285,8 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
       correlationId,
       input.fromAgent,
       input.toAgent,
-      input.type,
-      input.priority ?? 'normal',
+      validateType(input.type),
+      validatePriority(input.priority ?? 'normal'),
       input.subject.trim(),
       input.bodyMd.trim(),
       input.relatedProject ?? null,
@@ -270,6 +304,45 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
     return mapMessageRow(selectMessage.get(id) as MessageRow);
   });
 
+  const insertReplyWithEvent = db.transaction((input: ReplyAgentMailInput, original: MessageRow) => {
+    const reply = insertMessageWithMetadata({
+      fromAgent: input.actorAgent,
+      toAgent: original.from_agent,
+      type: 'note',
+      subject: input.subject?.trim() || `Re: ${original.subject}`,
+      bodyMd: input.bodyMd,
+      relatedProject: original.related_project ?? undefined,
+      requiresResponse: input.requiresResponse ?? false,
+      priority: input.priority ?? 'normal',
+      correlationId: original.correlation_id,
+      links: input.links,
+    });
+    insertEvent.run(
+      createId('evt'),
+      input.messageId,
+      'replied',
+      input.actorAgent,
+      JSON.stringify({ replyMessageId: reply.id }),
+      new Date().toISOString(),
+    );
+    return reply;
+  });
+
+  const ackMessageTransaction = db.transaction((actorAgent: string, messageId: string) => {
+    const before = selectMessage.get(messageId) as MessageRow | undefined;
+    if (!before || before.to_agent !== actorAgent) {
+      throw new Error(`Message not found for agent ${actorAgent}: ${messageId}`);
+    }
+    const now = new Date().toISOString();
+    updateAck.run(now, messageId, actorAgent);
+    // Only record the event when the ack actually transitions the row; a re-ack
+    // of an already-acked message is idempotent and must not append duplicates.
+    if (before.status === 'new') {
+      insertEvent.run(createId('evt'), messageId, 'acked', actorAgent, null, now);
+    }
+    return mapMessageRow(selectMessage.get(messageId) as MessageRow);
+  });
+
   return {
     send(input) {
       return insertMessageWithMetadata(input);
@@ -278,31 +351,12 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
     reply(input) {
       const original = selectMessage.get(input.messageId) as MessageRow | undefined;
       if (!original) throw new Error(`Message not found: ${input.messageId}`);
-      const reply = insertMessageWithMetadata({
-        fromAgent: input.actorAgent,
-        toAgent: original.from_agent,
-        type: 'note',
-        subject: input.subject?.trim() || `Re: ${original.subject}`,
-        bodyMd: input.bodyMd,
-        relatedProject: original.related_project ?? undefined,
-        requiresResponse: input.requiresResponse ?? false,
-        priority: input.priority ?? 'normal',
-        correlationId: original.correlation_id,
-        links: input.links,
-      });
-      insertEvent.run(
-        createId('evt'),
-        input.messageId,
-        'replied',
-        input.actorAgent,
-        JSON.stringify({ replyMessageId: reply.id }),
-        new Date().toISOString(),
-      );
-      return reply;
+      return insertReplyWithEvent(input, original);
     },
 
     listInbox(input) {
-      return (selectInbox.all(input.agent, input.status ?? null, input.status ?? null) as MessageRow[]).map(mapMessageRow);
+      const status = input.status ?? null;
+      return (selectInbox.all(input.agent, status, status, status) as MessageRow[]).map(mapMessageRow);
     },
 
     getMessage(messageId) {
@@ -319,11 +373,7 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
     },
 
     ackMessage(actorAgent, messageId) {
-      const now = new Date().toISOString();
-      const result = updateAck.run(now, messageId, actorAgent);
-      if (result.changes === 0) throw new Error(`Message not found for agent ${actorAgent}: ${messageId}`);
-      insertEvent.run(createId('evt'), messageId, 'acked', actorAgent, null, now);
-      return mapMessageRow(selectMessage.get(messageId) as MessageRow);
+      return ackMessageTransaction(actorAgent, messageId);
     },
 
     closeMessage(actorAgent, messageId) {
