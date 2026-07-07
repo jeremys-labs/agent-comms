@@ -135,10 +135,41 @@ export function listTasks(filter: ListFilter = {}, dir = resolveTaskLedgerDir())
     .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
 }
 
-export function updateTask(id: string, patch: TaskPatch, dir = resolveTaskLedgerDir()): TaskRecord {
+/** Thrown when a compare-and-set updateTask sees the on-disk record has moved
+ * on from the base version the caller read — i.e. a concurrent same-task write
+ * would silently clobber it. */
+export class StaleTaskWriteError extends Error {
+  constructor(id: string, expected: string, actual: string) {
+    super(`Stale update for task ${id}: expected updatedAt ${expected}, found ${actual}`);
+    this.name = 'StaleTaskWriteError';
+  }
+}
+
+/**
+ * Patch a task. When `expectedUpdatedAt` is supplied, the write is compare-and-
+ * set: it is rejected (StaleTaskWriteError) if the stored `updatedAt` no longer
+ * matches, so two agents transitioning the SAME task can't silently overwrite
+ * each other (the P1 concurrency risk the header comment warns about). Omitting
+ * it keeps the original last-writer-wins behaviour for single-writer callers.
+ */
+export function updateTask(
+  id: string,
+  patch: TaskPatch,
+  dir = resolveTaskLedgerDir(),
+  expectedUpdatedAt?: string,
+): TaskRecord {
   const existing = getTask(id, dir);
   if (!existing) throw new Error(`Task not found: ${id}`);
-  const updated: TaskRecord = { ...existing, ...patch, updatedAt: nowIso() };
+  if (expectedUpdatedAt !== undefined && existing.updatedAt !== expectedUpdatedAt) {
+    throw new StaleTaskWriteError(id, expectedUpdatedAt, existing.updatedAt);
+  }
+  // updatedAt doubles as the compare-and-set token, so it must strictly advance
+  // even for two writes that land within the same millisecond.
+  let updatedAt = nowIso();
+  if (updatedAt <= existing.updatedAt) {
+    updatedAt = new Date(new Date(existing.updatedAt).getTime() + 1).toISOString();
+  }
+  const updated: TaskRecord = { ...existing, ...patch, updatedAt };
   atomicWriteJson(taskPath(dir, id), updated);
   return updated;
 }

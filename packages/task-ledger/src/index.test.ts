@@ -11,6 +11,7 @@ import {
   handoffTask,
   blockTask,
   resolveTaskLedgerDir,
+  StaleTaskWriteError,
 } from './index.js';
 import { buildHandoffNotification } from './notify.js';
 
@@ -88,6 +89,25 @@ describe('updateTask', () => {
 
   it('throws for a missing id', () => {
     expect(() => updateTask('T_nope', { status: 'done' }, dir)).toThrow();
+  });
+
+  it('rejects a stale compare-and-set write and preserves the winner (M1)', () => {
+    const t = createTask({ title: 'shared', owner: 'eli', createdBy: 'eli' }, dir);
+    // Two agents both read the same base version of a shared task.
+    const base = getTask(t.id, dir)!;
+    // First writer commits against the shared base.
+    const first = updateTask(t.id, { status: 'in_progress' }, dir, base.updatedAt);
+    expect(first.status).toBe('in_progress');
+    // Second writer used the same now-stale base — must be rejected, not clobber.
+    expect(() => updateTask(t.id, { status: 'blocked' }, dir, base.updatedAt)).toThrow(StaleTaskWriteError);
+    // On-disk state reflects the first writer only.
+    expect(getTask(t.id, dir)?.status).toBe('in_progress');
+  });
+
+  it('keeps last-writer-wins when no expected updatedAt is supplied', () => {
+    const t = createTask({ title: 'x', owner: 'eli', createdBy: 'eli' }, dir);
+    expect(updateTask(t.id, { status: 'in_progress' }, dir).status).toBe('in_progress');
+    expect(updateTask(t.id, { status: 'done' }, dir).status).toBe('done');
   });
 });
 
