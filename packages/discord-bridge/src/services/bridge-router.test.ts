@@ -152,6 +152,33 @@ describe('discord bridge router', () => {
     expect(routed?.agentKey).toBe('zara');
   });
 
+  it('drops messages that do not mention the bot when requireMention is set (M5)', () => {
+    const mentionConfig = {
+      selfUserId: 'bot-user',
+      subscriptions: [
+        { agentKey: 'marcus', channelId: '1492892431543308439', requireMention: true },
+      ],
+    };
+
+    const unmentioned = routeDiscordMessage(mentionConfig as any, {
+      id: 'm-nomention',
+      channel_id: '1492892431543308439',
+      content: 'no ping here',
+      author: { id: 'user1', username: 'Jeremy' },
+      mentions: [],
+    });
+    expect(unmentioned).toBeNull();
+
+    const mentioned = routeDiscordMessage(mentionConfig as any, {
+      id: 'm-mention',
+      channel_id: '1492892431543308439',
+      content: 'hey <@bot-user>',
+      author: { id: 'user1', username: 'Jeremy' },
+      mentions: [{ id: 'bot-user' }],
+    });
+    expect(mentioned?.agentKey).toBe('marcus');
+  });
+
   it('preserves referenced message metadata for downstream reply capture', () => {
     const routed = routeDiscordMessage(config as any, {
       id: 'm8',

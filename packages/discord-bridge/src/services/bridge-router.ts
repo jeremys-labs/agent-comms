@@ -36,6 +36,11 @@ export function routeDiscordMessage(
 
   if (event.author?.bot && !subscription.allowBotIds?.includes(event.author.id!)) return null;
 
+  if (subscription.requireMention && config.selfUserId) {
+    const mentionsBot = event.mentions?.some((mention) => mention.id === config.selfUserId);
+    if (!mentionsBot) return null;
+  }
+
   return {
     id: event.id,
     agentKey: subscription.agentKey,

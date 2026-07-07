@@ -31,7 +31,10 @@ export function markSeen(contentRoot: string, subscriptionKey: string, messageId
   ensureDir(path.dirname(statePath(contentRoot)));
   const current = readBridgeState(contentRoot);
   current.lastSeenMessageIds[subscriptionKey] = messageId;
-  fs.writeFileSync(statePath(contentRoot), JSON.stringify(current, null, 2));
+  const target = statePath(contentRoot);
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(current, null, 2));
+  fs.renameSync(tmp, target);
 }
 
 export function getLastSeen(contentRoot: string, subscriptionKey: string): string | undefined {

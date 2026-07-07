@@ -49,4 +49,12 @@ describe('discord bridge store', () => {
     expect(hasSeen(tmpDir, 'marcus:c1', 'm1')).toBe(true);
     expect(readBridgeState(tmpDir).lastSeenMessageIds['marcus:c1']).toBe('m1');
   });
+
+  it('writes state atomically without leaving a temp file behind (L1)', () => {
+    markSeen(tmpDir, 'marcus:c1', 'm1');
+    const bridgeDir = path.join(tmpDir, 'bridge');
+    const leftovers = fs.readdirSync(bridgeDir).filter((name) => name.startsWith('state.json') && name !== 'state.json');
+    expect(leftovers).toEqual([]);
+    expect(readBridgeState(tmpDir).lastSeenMessageIds['marcus:c1']).toBe('m1');
+  });
 });
