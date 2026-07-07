@@ -101,12 +101,13 @@ describe('event inbox', () => {
     expect(() => inbox.closeEvent('zara', e.id)).toThrow(/not closable/);
   });
 
-  it('folds a receipt time into the Home Assistant delivery id so identical bodies stay distinct', () => {
+  it('derives a stable Home Assistant delivery id from the body so replays dedupe', () => {
     const body = Buffer.from(JSON.stringify({ event_type: 'motion' }));
-    const a = homeAssistantDeliveryId(body, '2026-07-07T00:00:00.000Z');
-    const b = homeAssistantDeliveryId(body, '2026-07-07T00:00:01.000Z');
+    const a = homeAssistantDeliveryId(body);
+    const b = homeAssistantDeliveryId(Buffer.from(JSON.stringify({ event_type: 'motion' })));
     expect(a).toHaveLength(64);
-    expect(a).not.toBe(b);
+    expect(a).toBe(b); // same body -> same key -> a retry of the same event dedupes
+    expect(a).not.toBe(homeAssistantDeliveryId(Buffer.from(JSON.stringify({ event_type: 'door' }))));
   });
 
   it('verifies and normalizes GitHub events for Zara', () => {

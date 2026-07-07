@@ -298,10 +298,13 @@ export function verifyHomeAssistantToken(authHeader: string | undefined, tokenHe
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
-export function homeAssistantDeliveryId(rawBody: Buffer, receivedAt: string = nowIso()): string {
-  // No upstream delivery id, so fold in the receipt time: two byte-identical but
-  // genuinely distinct events must not collapse into one dedupe key.
-  return crypto.createHash('sha256').update(rawBody).update(receivedAt).digest('hex');
+export function homeAssistantDeliveryId(rawBody: Buffer): string {
+  // No upstream delivery id, so the fallback key is the body hash alone — and
+  // deliberately stable: a retry/replay of the same body must produce the SAME
+  // key so it deduplicates (the primary goal for a webhook with no delivery id).
+  // Trade-off: two genuinely distinct events with byte-identical bodies and no
+  // upstream id collapse to one — acceptable, since we can't tell them apart.
+  return crypto.createHash('sha256').update(rawBody).digest('hex');
 }
 
 function homeAssistantEventType(payload: any): string {
