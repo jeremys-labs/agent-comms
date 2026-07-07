@@ -36,6 +36,17 @@ export function routeDiscordMessage(
 
   if (event.author?.bot && !subscription.allowBotIds?.includes(event.author.id!)) return null;
 
+  if (subscription.requireMention) {
+    // Fail closed: without the bot's own id we cannot tell if it was mentioned,
+    // so drop rather than route everything to a mention-gated channel.
+    if (!config.selfUserId) {
+      console.warn(`[discord-bridge] requireMention set for ${subscription.agentKey}:${subscription.channelId} but bot self id is unknown — dropping message ${event.id}`);
+      return null;
+    }
+    const mentionsBot = event.mentions?.some((mention) => mention.id === config.selfUserId);
+    if (!mentionsBot) return null;
+  }
+
   return {
     id: event.id,
     agentKey: subscription.agentKey,
@@ -58,10 +69,13 @@ export function routeDiscordMessage(
 export function routeDiscordMessageForBinding(
   binding: DiscordBridgeBinding,
   event: DiscordMessageEvent,
+  selfUserId?: string,
 ): DiscordBridgeInboxEntry | null {
   const scopedConfig: DiscordBridgeConfig = {
     tokenEnvVar: binding.tokenEnvVar,
-    selfUserId: binding.selfUserId,
+    // Derived bindings (from access.json) carry no selfUserId; use the id the
+    // gateway learned from the READY payload so mention-gating works there.
+    selfUserId: binding.selfUserId ?? selfUserId,
     subscriptions: binding.subscriptions,
   };
   const routed = routeDiscordMessage(scopedConfig, event);

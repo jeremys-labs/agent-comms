@@ -4,6 +4,7 @@ export interface DiscordBridgeSubscription {
   threadId?: string;
   workspaceDir?: string;
   allowBotIds?: string[];
+  requireMention?: boolean;
 }
 
 export interface DiscordBridgeConfig {
@@ -32,6 +33,7 @@ export interface DiscordMessageEvent {
   };
   guild_id?: string;
   timestamp?: string;
+  mentions?: Array<{ id?: string }>;
   referenced_message?: {
     id?: string;
     author?: {

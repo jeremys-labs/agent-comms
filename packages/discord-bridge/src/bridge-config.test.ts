@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadDiscordBridgeConfig, normalizeDiscordBridgeBindings } from './bridge-config.js';
+import { loadDiscordBridgeConfig, normalizeDiscordBridgeBindings, partitionBindingsByToken } from './bridge-config.js';
 
 describe('loadDiscordBridgeConfig', () => {
   let tmpDir: string;
@@ -72,5 +72,42 @@ describe('loadDiscordBridgeConfig', () => {
     expect(config?.subscriptions).toEqual([
       { agentKey: 'zara', channelId: '1492551894214905886' },
     ]);
+  });
+
+  it('carries requireMention into the derived subscription only when enabled', () => {
+    const discordStateDir = path.join(tmpDir, 'zara-discord');
+    fs.mkdirSync(discordStateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(discordStateDir, 'access.json'),
+      JSON.stringify({
+        groups: {
+          '111': { requireMention: true },
+          '222': { requireMention: false },
+        },
+      }),
+    );
+
+    process.env.DISCORD_BRIDGE_AGENT_KEY = 'zara';
+    process.env.DISCORD_BRIDGE_STATE_DIR = discordStateDir;
+
+    const config = loadDiscordBridgeConfig(tmpDir);
+    expect(config?.subscriptions).toEqual([
+      { agentKey: 'zara', channelId: '111', requireMention: true },
+      { agentKey: 'zara', channelId: '222' },
+    ]);
+  });
+});
+
+describe('partitionBindingsByToken', () => {
+  const bindings = [
+    { name: 'zara', tokenEnvVar: 'TOKEN_ZARA', subscriptions: [] },
+    { name: 'marcus', tokenEnvVar: 'TOKEN_MARCUS', subscriptions: [] },
+  ];
+
+  it('splits bindings into those with a token and those missing one (C2)', () => {
+    const { ready, missing } = partitionBindingsByToken(bindings, { TOKEN_ZARA: 'abc' });
+
+    expect(ready.map((binding) => binding.name)).toEqual(['zara']);
+    expect(missing).toEqual([{ name: 'marcus', tokenEnvVar: 'TOKEN_MARCUS' }]);
   });
 });
