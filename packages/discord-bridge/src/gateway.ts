@@ -145,7 +145,12 @@ function rawDiscordPost(token: string, channelId: string, requestBody: DiscordRe
   });
 }
 
-async function postDiscordMessage(token: string, channelId: string, requestBody: DiscordRequestBody): Promise<{ id: string }> {
+type DiscordSendResult = {
+  id: string;
+  attachmentCount: number;
+};
+
+async function postDiscordMessage(token: string, channelId: string, requestBody: DiscordRequestBody): Promise<DiscordSendResult> {
   let res = await rawDiscordPost(token, channelId, requestBody);
   if (res.statusCode === 429) {
     const retryMs = parseRetryAfterMs(res.headers, res.data);
@@ -158,10 +163,14 @@ async function postDiscordMessage(token: string, channelId: string, requestBody:
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw new Error(`Discord send failed ${res.statusCode}: ${res.data}`);
   }
-  return JSON.parse(res.data) as { id: string };
+  const parsed = JSON.parse(res.data) as { id: string; attachments?: unknown[] };
+  return {
+    id: parsed.id,
+    attachmentCount: Array.isArray(parsed.attachments) ? parsed.attachments.length : 0,
+  };
 }
 
-async function sendDiscordMessage(token: string, channelId: string, text: string | undefined, files: string[], replyTo?: string): Promise<{ id: string }> {
+async function sendDiscordMessage(token: string, channelId: string, text: string | undefined, files: string[], replyTo?: string): Promise<DiscordSendResult> {
   const parts = text ? splitDiscordContent(text) : [];
   let firstSent = false;
   const takeReply = (): string | undefined => {
@@ -179,14 +188,16 @@ async function sendDiscordMessage(token: string, channelId: string, text: string
     }
     const finalText = parts.length > 0 ? parts[parts.length - 1] : undefined;
     const sent = await postDiscordMessage(token, channelId, buildDiscordMultipartBody(finalText, files, takeReply()));
-    return { id: sent.id };
+    return sent;
   }
 
+  let lastAttachmentCount = 0;
   for (const part of parts) {
     const sent = await postDiscordMessage(token, channelId, { body: buildDiscordJsonBody(part, takeReply()), contentType: 'application/json' });
     lastId = sent.id;
+    lastAttachmentCount = sent.attachmentCount;
   }
-  return { id: lastId };
+  return { id: lastId, attachmentCount: lastAttachmentCount };
 }
 
 function readJsonBody(req: http.IncomingMessage): Promise<OutboundRequest> {
@@ -243,9 +254,9 @@ const outboundServer = http.createServer(async (req, res) => {
     }
 
     const sent = await sendDiscordMessage(token, channelId, request.text, files, request.reply_to);
-    console.log(`[discord-bridge] [${binding.name}] sent ${sent.id} for ${request.agentKey ?? 'unknown'} -> ${channelId}`);
+    console.log(`[discord-bridge] [${binding.name}] sent ${sent.id} for ${request.agentKey ?? 'unknown'} -> ${channelId} (${sent.attachmentCount} attachment(s))`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, id: sent.id, bindingName: binding.name }));
+    res.end(JSON.stringify({ ok: true, id: sent.id, bindingName: binding.name, attachmentCount: sent.attachmentCount }));
   } catch (error) {
     // Delivery-failure log. The shared delivery-health logger referenced in the
     // harness review lives in mcc-tmux, not this repo, so record to stderr here.
