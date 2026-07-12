@@ -9,6 +9,7 @@ import { DiscordGatewayClient } from './services/discord-gateway-client.js';
 import { parseRetryAfterMs, splitDiscordContent } from './services/discord-send.js';
 import { makeSocketHealthCheck } from './services/socket-heal.js';
 import { appendInboxEntry, hasSeen, markSeen } from './services/bridge-store.js';
+import { recordInboundExpected, recordOutboundSent } from './services/reconcile-breadcrumbs.js';
 import { routeDiscordMessageForBinding } from './services/bridge-router.js';
 import { backfillBindingMessages, subscriptionKey } from './services/discord-rest-backfill.js';
 import { wakeAgentRuntime } from './services/runtime-wake.js';
@@ -254,6 +255,15 @@ const outboundServer = http.createServer(async (req, res) => {
     }
 
     const sent = await sendDiscordMessage(token, channelId, request.text, files, request.reply_to);
+    // Breadcrumb for the inbound-reply reconciler: written only after a
+    // successful Discord POST (a failed send writes nothing).
+    recordOutboundSent(contentRoot, {
+      sent_at: new Date().toISOString(),
+      agent: request.agentKey ?? 'unknown',
+      chat_id: channelId,
+      message_id: sent.id,
+      binding: binding.name,
+    });
     console.log(`[discord-bridge] [${binding.name}] sent ${sent.id} for ${request.agentKey ?? 'unknown'} -> ${channelId} (${sent.attachmentCount} attachment(s))`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, id: sent.id, bindingName: binding.name, attachmentCount: sent.attachmentCount }));
@@ -328,6 +338,15 @@ for (const binding of readyBindings) {
     if (hasSeen(contentRoot, key, routed.id)) return;
 
     const filePath = appendInboxEntry(contentRoot, routed);
+    // Breadcrumb for the inbound-reply reconciler: a reply is now expected.
+    recordInboundExpected(contentRoot, {
+      queued_at: new Date().toISOString(),
+      agent: routed.agentKey,
+      chat_id: routed.channelId,
+      message_id: routed.id,
+      binding: binding.name,
+      inbox_path: filePath,
+    });
     const capture = captureKnowledgeGapReply(routed);
     if (capture.captured) {
       console.log(`[discord-bridge] [${binding.name}] captured knowledge-gap reply ${routed.id}`);
