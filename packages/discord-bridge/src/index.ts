@@ -3,5 +3,7 @@ export * from './bridge-identity.js';
 export * from './paths.js';
 export * from './services/bridge-router.js';
 export * from './services/bridge-store.js';
+export * from './services/reconcile-breadcrumbs.js';
+export * from './services/runtime-wake.js';
 export * from './services/discord-gateway-client.js';
 export * from './types/bridge.js';
