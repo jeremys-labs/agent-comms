@@ -7,6 +7,7 @@ import { resolveContentRoot, ensureBridgeDirs } from './paths.js';
 import { loadDiscordBridgeConfig, normalizeDiscordBridgeBindings, partitionBindingsByToken } from './bridge-config.js';
 import { DiscordGatewayClient } from './services/discord-gateway-client.js';
 import { parseRetryAfterMs, splitDiscordContent } from './services/discord-send.js';
+import { fetchDiscordChannelHistory } from './services/discord-history.js';
 import { makeSocketHealthCheck } from './services/socket-heal.js';
 import { appendInboxEntry, hasSeen, markSeen } from './services/bridge-store.js';
 import { recordInboundExpected, recordOutboundSent } from './services/reconcile-breadcrumbs.js';
@@ -43,6 +44,17 @@ type OutboundRequest = {
   reply_to?: string;
 };
 
+type HistoryRequest = {
+  agentKey?: string;
+  bindingName?: string;
+  chat_id?: string;
+  channelId?: string;
+  limit?: number;
+  before?: string;
+  after?: string;
+  around?: string;
+};
+
 function findOutboundBinding(request: OutboundRequest): typeof bindings[number] | null {
   const channelId = request.chat_id ?? request.channelId;
   if (!channelId) return null;
@@ -51,6 +63,19 @@ function findOutboundBinding(request: OutboundRequest): typeof bindings[number] 
     if (request.bindingName && binding.name !== request.bindingName) return false;
     return binding.subscriptions.some((subscription) => (
       subscription.channelId === channelId &&
+      (!request.agentKey || subscription.agentKey === request.agentKey)
+    ));
+  }) ?? null;
+}
+
+function findHistoryBinding(request: HistoryRequest): typeof bindings[number] | null {
+  const channelId = request.chat_id ?? request.channelId;
+  if (!channelId) return null;
+
+  return bindings.find((binding) => {
+    if (request.bindingName && binding.name !== request.bindingName) return false;
+    return binding.subscriptions.some((subscription) => (
+      (subscription.threadId ?? subscription.channelId) === channelId &&
       (!request.agentKey || subscription.agentKey === request.agentKey)
     ));
   }) ?? null;
@@ -201,7 +226,7 @@ async function sendDiscordMessage(token: string, channelId: string, text: string
   return { id: lastId, attachmentCount: lastAttachmentCount };
 }
 
-function readJsonBody(req: http.IncomingMessage): Promise<OutboundRequest> {
+function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
   return new Promise((resolve, reject) => {
     let body = '';
     req.setEncoding('utf8');
@@ -214,7 +239,7 @@ function readJsonBody(req: http.IncomingMessage): Promise<OutboundRequest> {
     });
     req.on('end', () => {
       try {
-        resolve(JSON.parse(body || '{}') as OutboundRequest);
+        resolve(JSON.parse(body || '{}') as T);
       } catch (error) {
         reject(error);
       }
@@ -225,13 +250,49 @@ function readJsonBody(req: http.IncomingMessage): Promise<OutboundRequest> {
 
 const outboundServer = http.createServer(async (req, res) => {
   try {
-    if (req.method !== 'POST' || req.url !== '/send') {
+    if (req.method !== 'POST' || (req.url !== '/send' && req.url !== '/history')) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'not found' }));
       return;
     }
 
-    const request = await readJsonBody(req);
+    if (req.url === '/history') {
+      const request = await readJsonBody<HistoryRequest>(req);
+      const channelId = request.chat_id ?? request.channelId;
+      if (!channelId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'chat_id is required' }));
+        return;
+      }
+
+      const binding = findHistoryBinding(request);
+      if (!binding) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `channel ${channelId} is not allowlisted for ${request.agentKey ?? 'requested agent'}` }));
+        return;
+      }
+
+      const token = process.env[binding.tokenEnvVar];
+      if (!token) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `missing token env var ${binding.tokenEnvVar}` }));
+        return;
+      }
+
+      const messages = await fetchDiscordChannelHistory(token, {
+        channelId,
+        limit: request.limit,
+        before: request.before,
+        after: request.after,
+        around: request.around,
+      });
+      console.log(`[discord-bridge] [${binding.name}] read ${messages.length} history message(s) for ${request.agentKey ?? 'unknown'} <- ${channelId}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(messages));
+      return;
+    }
+
+    const request = await readJsonBody<OutboundRequest>(req);
     const channelId = request.chat_id ?? request.channelId;
     const files = validateRequestFiles(request.files);
     if (!channelId || (!request.text && files.length === 0)) {

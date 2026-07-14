@@ -6,4 +6,5 @@ export * from './services/bridge-store.js';
 export * from './services/reconcile-breadcrumbs.js';
 export * from './services/runtime-wake.js';
 export * from './services/discord-gateway-client.js';
+export * from './services/discord-history.js';
 export * from './types/bridge.js';
