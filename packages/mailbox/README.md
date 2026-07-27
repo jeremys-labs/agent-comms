@@ -44,3 +44,24 @@ agent-mail ack --agent marcus --id msg_123
 agent-mail reply --agent marcus --id msg_123 --body "I own it."
 agent-mail close --agent marcus --id msg_123
 ```
+
+# Branch review handoffs
+
+Generate Git-backed evidence for a branch-review handoff before sending it:
+
+```bash
+agent-mail branch-manifest \
+  --repo /path/to/repo \
+  --base origin/main \
+  --branch my/branch \
+  --test-command "npm test" \
+  --output /tmp/branch-handoff.md
+```
+
+Attach the output to the fleet's five-field handoff. Keep owner, status/blocker,
+next action, and source-of-truth status in the handoff prose because those are
+human claims. The generated artifact contains only evidence: `git cherry` scope,
+per-commit files, diffstat, a mandatory activation/default scan, and the actual
+test command with its observed exit code/output. It records failing tests rather
+than hiding them. The activation/default scan surfaces candidate changed lines
+for human judgment; it does not interpret their runtime semantics.

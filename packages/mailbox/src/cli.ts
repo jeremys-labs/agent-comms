@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'fs';
 import { createAgentMailStore, type AgentMailPriority, type AgentMailStatus, type AgentMailType } from './index.js';
+import { buildBranchReviewManifest } from './branch-review-manifest.js';
 import { validateSingleRecipient } from './recipients.js';
 
 interface ParsedArgs {
@@ -70,6 +71,8 @@ Commands:
           [--subject <s>] [--priority low|normal|high] [--requires-response]
   close   --agent <agent> --id <messageId>
   thread  (--id <messageId> | --correlation-id <corrId>)
+  branch-manifest --repo <path> [--base origin/main] [--branch HEAD]
+          --test-command <command> [--output <path>]
   help    Show this help
 
 Environment:
@@ -95,6 +98,21 @@ function main(): void {
   }
 
   const { command, options } = parseArgs(argv);
+  if (command === 'branch-manifest') {
+    const manifest = buildBranchReviewManifest({
+      repoPath: getOptional(options, 'repo') ?? process.cwd(),
+      baseRef: getOptional(options, 'base') ?? 'origin/main',
+      branchRef: getOptional(options, 'branch') ?? 'HEAD',
+      testCommand: getRequired(options, 'test-command'),
+    });
+    const output = getOptional(options, 'output');
+    if (output) {
+      fs.writeFileSync(output, manifest);
+    } else {
+      process.stdout.write(manifest);
+    }
+    return;
+  }
   const store = createAgentMailStore();
 
   try {
