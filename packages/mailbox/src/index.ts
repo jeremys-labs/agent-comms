@@ -345,12 +345,18 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
 
   return {
     send(input) {
+      if (input.fromAgent === input.toAgent) {
+        throw new Error(`Agent mail cannot be addressed to its sender: ${input.fromAgent}`);
+      }
       return insertMessageWithMetadata(input);
     },
 
     reply(input) {
       const original = selectMessage.get(input.messageId) as MessageRow | undefined;
       if (!original) throw new Error(`Message not found: ${input.messageId}`);
+      if (original.from_agent === input.actorAgent) {
+        throw new Error(`Agent mail cannot reply to itself: ${input.actorAgent}`);
+      }
       return insertReplyWithEvent(input, original);
     },
 
