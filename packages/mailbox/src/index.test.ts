@@ -206,6 +206,29 @@ describe('agent mail hardening', () => {
     store.close();
   });
 
+  it('requires structured, non-empty fields on handoffs', () => {
+    const store = createAgentMailStore(dbPath);
+    const handoff = {
+      fromAgent: 'eli',
+      toAgent: 'marcus',
+      type: 'handoff' as const,
+      subject: 'Review ready',
+    };
+
+    expect(() => store.send({ ...handoff, bodyMd: 'Owner: Eli\nArtifact: /tmp/proof.md' }))
+      .toThrow(/next-action, verification-status/i);
+    expect(() => store.send({
+      ...handoff,
+      bodyMd: 'Owner: Eli\nNext action: \nArtifact: /tmp/proof.md\nVerification status: passed',
+    })).toThrow(/next-action/i);
+    expect(() => store.send({
+      ...handoff,
+      bodyMd: 'Owner: Eli\nNext action: Review the patch\nArtifact: /tmp/proof.md\nVerification status: tests passed',
+    })).not.toThrow();
+
+    store.close();
+  });
+
   it('rejects unknown priority on reply', () => {
     const store = createAgentMailStore(dbPath);
     const original = store.send({ fromAgent: 'eli', toAgent: 'marcus', type: 'note', subject: 's', bodyMd: 'b' });

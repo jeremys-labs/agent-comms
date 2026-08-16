@@ -185,6 +185,22 @@ function validatePriority(priority: AgentMailPriority): AgentMailPriority {
   return priority;
 }
 
+const HANDOFF_REQUIRED_FIELDS = [
+  { label: 'owner', pattern: /^[ \t]*owner[ \t]*:[ \t]*(?=\S)[^\r\n]*$/im },
+  { label: 'next-action', pattern: /^[ \t]*next[ -]action[ \t]*:[ \t]*(?=\S)[^\r\n]*$/im },
+  { label: 'artifact', pattern: /^[ \t]*artifact[ \t]*:[ \t]*(?=\S)[^\r\n]*$/im },
+  { label: 'verification-status', pattern: /^[ \t]*verification[ -]status[ \t]*:[ \t]*(?=\S)[^\r\n]*$/im },
+] as const;
+
+function validateHandoffBody(bodyMd: string): void {
+  const missing = HANDOFF_REQUIRED_FIELDS
+    .filter(({ pattern }) => !pattern.test(bodyMd))
+    .map(({ label }) => label);
+  if (missing.length > 0) {
+    throw new Error(`Handoff requires non-empty fields: ${missing.join(', ')}.`);
+  }
+}
+
 export function formatAgentMailForRuntime(message: AgentMailMessage): string {
   const lines = [
     `[Agent Mail] New message from ${message.fromAgent} | type=${message.type} | priority=${message.priority} | subject=${message.subject} | id=${message.id} | requires_response=${String(message.requiresResponse)}`,
@@ -277,6 +293,8 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
   `);
 
   const insertMessageWithMetadata = db.transaction((input: SendAgentMailInput) => {
+    const type = validateType(input.type);
+    if (type === 'handoff') validateHandoffBody(input.bodyMd);
     const id = createId('msg');
     const correlationId = input.correlationId ?? createId('corr');
     const now = new Date().toISOString();
@@ -285,7 +303,7 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
       correlationId,
       input.fromAgent,
       input.toAgent,
-      validateType(input.type),
+      type,
       validatePriority(input.priority ?? 'normal'),
       input.subject.trim(),
       input.bodyMd.trim(),

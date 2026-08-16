@@ -1,4 +1,7 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 
@@ -28,5 +31,22 @@ describe('agent-mail CLI help', () => {
     expect(runCli(['-h']).stdout).toContain('Usage: agent-mail');
     expect(runCli(['help']).stdout).toContain('Usage: agent-mail');
     expect(runCli([]).stdout).toContain('Usage: agent-mail');
+  });
+});
+
+describe('agent-mail CLI handoffs', () => {
+  it('rejects a handoff that omits required fields', () => {
+    const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mail-cli-'));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ['--import', 'tsx', cliPath, 'send', '--from', 'eli', '--to', 'marcus', '--type', 'handoff', '--subject', 'Review', '--body', 'Owner: Eli'],
+        { encoding: 'utf8', env: { ...process.env, AGENT_MAIL_DIR: mailDir } },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('Handoff requires non-empty fields: next-action, artifact, verification-status.');
+    } finally {
+      fs.rmSync(mailDir, { recursive: true, force: true });
+    }
   });
 });

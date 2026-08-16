@@ -65,3 +65,10 @@ per-commit files, diffstat, a mandatory activation/default scan, and the actual
 test command with its observed exit code/output. It records failing tests rather
 than hiding them. The activation/default scan surfaces candidate changed lines
 for human judgment; it does not interpret their runtime semantics.
+
+## Handoff validation
+
+`agent-mail send --type handoff` rejects the message unless its body contains
+non-empty `Owner:`, `Next action:`, `Artifact:`, and `Verification status:`
+lines. This enforces the minimum handoff contract at send time; all other
+message types remain free-form.
