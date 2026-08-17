@@ -12,6 +12,7 @@ import {
   closeTask,
   handoffTask,
   blockTask,
+  getFleetHealth,
   resolveTaskLedgerDir,
   StaleTaskWriteError,
 } from './index.js';
@@ -182,6 +183,51 @@ describe('listTasks', () => {
     updateTask(z.id, { status: 'blocked' }, dir);
     expect(listTasks({ owner: 'eli' }, dir).map((t) => t.id)).toEqual([e.id]);
     expect(listTasks({ status: ['blocked'] }, dir).map((t) => t.id)).toEqual([z.id]);
+  });
+});
+
+describe('getFleetHealth (P2)', () => {
+  const NOW = new Date('2026-08-17T13:00:00.000Z');
+
+  const backdate = (id: string, updatedAt: string) => {
+    const current = getTask(id, dir)!;
+    fs.writeFileSync(path.join(dir, 'tasks', `${id}.json`), `${JSON.stringify({ ...current, updatedAt }, null, 2)}\n`);
+  };
+
+  it('surfaces aged in-progress and handed-off tasks but not a fresh task (real stale-board regression)', () => {
+    const agedInProgress = createTask({ title: 'old in progress', owner: 'eli', createdBy: 'eli' }, dir);
+    const agedHandoff = createTask({ title: 'old handoff', owner: 'zara', createdBy: 'eli' }, dir);
+    const fresh = createTask({ title: 'fresh', owner: 'isla', createdBy: 'eli' }, dir);
+    updateTask(agedInProgress.id, { status: 'in_progress' }, dir);
+    updateTask(agedHandoff.id, { status: 'handed_off', handoffTo: 'isla' }, dir);
+    backdate(agedInProgress.id, '2026-08-01T13:00:00.000Z');
+    backdate(agedHandoff.id, '2026-08-02T13:00:00.000Z');
+    backdate(fresh.id, '2026-08-17T12:00:00.000Z');
+
+    const report = getFleetHealth(listTasks({}, dir), { now: NOW });
+    expect(report.staleTasks.map((task) => task.id).sort()).toEqual([agedInProgress.id, agedHandoff.id].sort());
+    expect(report.sourceFresh).toBe(true);
+  });
+
+  it('reports a cold source with an empty active board (future false-clean regression)', () => {
+    const closed = createTask({ title: 'old completed work', owner: 'eli', createdBy: 'eli' }, dir);
+    updateTask(closed.id, { status: 'done' }, dir);
+    backdate(closed.id, '2026-08-01T13:00:00.000Z');
+
+    const report = getFleetHealth(listTasks({}, dir), { now: NOW });
+    expect(report.staleTasks).toEqual([]);
+    expect(report.sourceFresh).toBe(false);
+    expect(report.newestMutationAgeMs).toBe(16 * 24 * 60 * 60 * 1000);
+  });
+
+  it('excludes open work from the active board policy', () => {
+    const open = createTask({ title: 'filed but unclaimed', owner: 'eli', createdBy: 'eli' }, dir);
+    backdate(open.id, '2026-08-01T13:00:00.000Z');
+    expect(getFleetHealth(listTasks({}, dir), { now: NOW }).staleTasks).toEqual([]);
+  });
+
+  it('refuses a zero-task source instead of claiming the board is clean', () => {
+    expect(() => getFleetHealth([], { now: NOW })).toThrow(/parsed zero tasks/);
   });
 });
 

@@ -56,6 +56,26 @@ export interface ListFilter {
   status?: TaskStatus[];
 }
 
+/** The live fleet board excludes `open`: filed work is not yet a claimed stall. */
+export const FLEET_ACTIVE_STATUSES: TaskStatus[] = ['in_progress', 'blocked', 'handed_off'];
+export const DEFAULT_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
+export interface FleetHealthOptions {
+  /** Injectable for deterministic checks. All timestamps are ISO/UTC. */
+  now?: Date;
+  staleAfterMs?: number;
+}
+
+export interface FleetHealthReport {
+  checkedTaskCount: number;
+  checkedOwnerCount: number;
+  staleAfterMs: number;
+  staleTasks: TaskRecord[];
+  newestMutationAt: string;
+  newestMutationAgeMs: number;
+  sourceFresh: boolean;
+}
+
 export function resolveTaskLedgerDir(): string {
   return process.env.TASK_LEDGER_DIR || DEFAULT_TASK_LEDGER_DIR;
 }
@@ -193,6 +213,43 @@ export function listTasks(filter: ListFilter = {}, dir = resolveTaskLedgerDir())
     .filter((t) => (filter.owner ? t.owner === filter.owner : true))
     .filter((t) => (statusSet ? statusSet.has(t.status) : true))
     .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+}
+
+/**
+ * Read-only fleet-health calculation. A task is stale when it is active and its
+ * `updatedAt` is older than the UTC threshold. Source freshness deliberately
+ * considers every parsed record: a cold ledger must not look clean merely
+ * because no current task matches the active-status filter.
+ */
+export function getFleetHealth(tasks: TaskRecord[], options: FleetHealthOptions = {}): FleetHealthReport {
+  if (tasks.length === 0) {
+    throw new Error('fleet health parsed zero tasks; refusing to report a clean ledger');
+  }
+  const now = options.now ?? new Date();
+  const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+  if (!Number.isFinite(now.getTime())) throw new Error('fleet health received an invalid UTC clock');
+  if (!Number.isFinite(staleAfterMs) || staleAfterMs <= 0) throw new Error('stale threshold must be a positive duration');
+
+  const dated = tasks.map((task) => {
+    const updatedAtMs = Date.parse(task.updatedAt);
+    if (!Number.isFinite(updatedAtMs)) throw new Error(`task ${task.id} has invalid updatedAt ${JSON.stringify(task.updatedAt)}`);
+    return { task, updatedAtMs };
+  });
+  const newest = dated.reduce((current, candidate) => candidate.updatedAtMs > current.updatedAtMs ? candidate : current);
+  const staleTasks = dated
+    .filter(({ task, updatedAtMs }) => FLEET_ACTIVE_STATUSES.includes(task.status) && now.getTime() - updatedAtMs > staleAfterMs)
+    .map(({ task }) => task);
+  const newestMutationAgeMs = Math.max(0, now.getTime() - newest.updatedAtMs);
+
+  return {
+    checkedTaskCount: tasks.length,
+    checkedOwnerCount: new Set(tasks.map((task) => task.owner)).size,
+    staleAfterMs,
+    staleTasks,
+    newestMutationAt: newest.task.updatedAt,
+    newestMutationAgeMs,
+    sourceFresh: newestMutationAgeMs <= staleAfterMs,
+  };
 }
 
 /** Thrown when a compare-and-set updateTask sees the on-disk record has moved

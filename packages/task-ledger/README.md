@@ -20,6 +20,7 @@ task-ledger add     --owner X --title "..." [--created-by Y] [--priority low|med
 task-ledger update  --id T [--status open|in_progress|blocked|handed_off|done|killed] [--priority ...] [--title ...] [--owner ...] [--context ...] [--blocked-on ...] [--handoff-to ...]
 task-ledger handoff --id T --to AGENT [--from AGENT]   # sets handed_off + sends an agent-mail handoff notification
 task-ledger block   --id T --blocked-on "..."
+task-ledger fleet-health [--stale-after-days N]
 task-ledger list    [--owner X] [--status in_progress,blocked] [--fleet] [--json]
 task-ledger show    --id T
 task-ledger close   --id T [--outcome done|killed]
@@ -30,11 +31,19 @@ task-ledger close   --id T [--outcome done|killed]
 notifications go through `@agent-comms/mailbox` (a `handoff`-type message to the new
 owner) and are **fail-soft** — the handoff state commits even if the mailbox is down.
 
+`fleet-health` is read-only. It reports stale `in_progress`, `blocked`, and
+`handed_off` records under an explicit UTC threshold (default seven days); `open`
+means filed but unclaimed work and is intentionally outside the active board. It also
+reports the age of the newest mutation across **all** records, so a cold ledger cannot
+look healthy merely because the active board is empty. It refuses to report when zero
+task files parse and prints an adopt-or-retire decision when the ledger source is cold;
+it never sends mail or changes task state.
+
 ## Status
 
 - **P0 (done):** data model + atomic file store + `add/update/list/show/close`, single-agent usable.
 - **P1 (done, on-branch):** `handoff` + `block`/`blocked_on` + `--fleet` view + handoff notification via the agent-mail event path.
-- **P2 (next):** surfacing — Isla fleet-board command, optional newsletter line, stale-blocker escalation.
+- **P2 (done):** read-only `fleet-health` surfacing — UTC staleness across active board states, source-freshness detection, and a fleet-board adopt-or-retire decision.
 - **Deferred (flagged, not built):** global `task-ledger` bin install for multi-agent shells; compare-and-swap on `updatedAt` for concurrent same-task updates.
 
 Spec: `/Volumes/Repo-Drive/agents/eli/docs/self-improvement/2026-06-09-two-lane-loop-and-task-ledger-spec.md`

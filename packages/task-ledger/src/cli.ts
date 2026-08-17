@@ -7,6 +7,7 @@ import {
   closeTask,
   handoffTask,
   blockTask,
+  getFleetHealth,
   type TaskStatus,
   type TaskPriority,
   type TaskPatch,
@@ -56,11 +57,17 @@ function fmtFleetLine(t: TaskRecord): string {
   return `${t.id}  [${t.status}/${t.priority}]  @${t.owner}  ${t.title}${extra}`;
 }
 
+function days(ms: number): string {
+  const dayMs = 24 * 60 * 60 * 1000;
+  return `${(ms / dayMs).toFixed(ms % dayMs === 0 ? 0 : 1)}d`;
+}
+
 const USAGE = `task-ledger <command> [options]
   add     --owner X --title "..." [--created-by Y] [--priority low|med|high] [--context "..."] [--links a,b] [--tags x,y]
   update  --id T [--status open|in_progress|blocked|handed_off|done|killed] [--priority ...] [--title ...] [--owner ...] [--context ...] [--blocked-on ...] [--handoff-to ...]
   handoff --id T --to AGENT [--from AGENT]      (sets handed_off + sends an agent-mail handoff notification)
   block   --id T --blocked-on "..."
+  fleet-health [--stale-after-days N]
   list    [--owner X] [--status in_progress,blocked] [--fleet] [--json]
   show    --id T
   close   --id T [--outcome done|killed]`;
@@ -139,6 +146,24 @@ async function main(): Promise<void> {
       if (!opts.id || !opts['blocked-on']) fail('block requires --id and --blocked-on');
       try {
         console.log(JSON.stringify(blockTask(opts.id, opts['blocked-on']), null, 2));
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e));
+      }
+      break;
+    }
+    case 'fleet-health': {
+      const staleAfterDays = opts['stale-after-days'] === undefined ? 7 : Number(opts['stale-after-days']);
+      if (!Number.isFinite(staleAfterDays) || staleAfterDays <= 0) fail('--stale-after-days must be a positive number');
+      try {
+        const report = getFleetHealth(listTasks(), { staleAfterMs: staleAfterDays * 24 * 60 * 60 * 1000 });
+        console.log(`checked ${report.checkedTaskCount} tasks across ${report.checkedOwnerCount} agents · ${report.staleTasks.length} stale · stale >${days(report.staleAfterMs)} (basis: UTC)`);
+        console.log(`ledger source: newest mutation ${report.newestMutationAt} · ${days(report.newestMutationAgeMs)} old · ${report.sourceFresh ? 'fresh' : 'COLD'}`);
+        for (const task of report.staleTasks) {
+          console.log(`  [STALE] ${task.status} · @${task.owner} · ${task.title} · updated ${task.updatedAt}`);
+        }
+        if (!report.sourceFresh) {
+          console.log('DECISION REQUIRED (fleet-board owner): adopt the ledger as the active board or retire it; do not leave it cold.');
+        }
       } catch (e) {
         fail(e instanceof Error ? e.message : String(e));
       }
