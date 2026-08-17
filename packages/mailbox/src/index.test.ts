@@ -87,35 +87,25 @@ describe('agent mail', () => {
     expect(prompt).toContain('Who owns the next API cut?');
   });
 
-  it('rejects self-addressed mail and self-replies', () => {
+  it('preserves self-addressed mail for durable journaling and loop threads', () => {
     const store = createAgentMailStore(dbPath);
 
-    expect(() => store.send({
+    const original = store.send({
       fromAgent: 'cecelia',
       toAgent: 'cecelia',
       type: 'question',
       subject: 'Quick test',
       bodyMd: 'Hello',
-    })).toThrow(/cannot be addressed to its sender/i);
-
-    const directRow = new Database(dbPath);
-    directRow.prepare(`
-      INSERT INTO messages (
-        id, correlation_id, from_agent, to_agent, type, priority, subject, body_md,
-        related_project, requires_response, status, created_at, acked_at, closed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      'msg_self', 'corr_self', 'cecelia', 'cecelia', 'question', 'normal', 'Quick test', 'Hello',
-      null, 0, 'acked', '2026-08-09T15:17:00.000Z', '2026-08-09T15:17:01.000Z', null,
-    );
-    directRow.close();
-
-    expect(() => store.reply({
+    });
+    store.ackMessage('cecelia', original.id);
+    const reply = store.reply({
       actorAgent: 'cecelia',
-      messageId: 'msg_self',
+      messageId: original.id,
       bodyMd: 'Replying to myself',
-    })).toThrow(/cannot reply to itself/i);
-    expect(store.getThread('corr_self')).toHaveLength(1);
+    });
+
+    expect(reply.toAgent).toBe('cecelia');
+    expect(store.getThread(original.correlationId)).toHaveLength(2);
     store.close();
   });
 });

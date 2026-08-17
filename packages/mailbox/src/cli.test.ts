@@ -35,6 +35,22 @@ describe('agent-mail CLI help', () => {
 });
 
 describe('agent-mail CLI handoffs', () => {
+  it('allows self-addressed loop mail; runtime wake suppression owns containment', () => {
+    const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mail-cli-'));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ['--import', 'tsx', cliPath, 'send', '--from', 'isla', '--to', 'isla', '--type', 'note', '--subject', 'Loop kickoff', '--body', 'Continue the loop.'],
+        { encoding: 'utf8', env: { ...process.env, AGENT_MAIL_DIR: mailDir } },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('"fromAgent": "isla"');
+      expect(result.stdout).toContain('"toAgent": "isla"');
+    } finally {
+      fs.rmSync(mailDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a handoff that omits required fields', () => {
     const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mail-cli-'));
     try {
