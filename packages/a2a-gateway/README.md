@@ -28,11 +28,16 @@ npm run status --workspace=@agent-comms/a2a-gateway -- --limit 20
 npm run status --workspace=@agent-comms/a2a-gateway -- --agent zara --state submitted --json
 ```
 
-For launchd, write secrets and public URL to:
+For launchd, write non-secret configuration and the public URL to:
 
 ```text
 /Users/jeremylahners/.agent-comms/a2a-gateway/env
 ```
+
+Do not store `A2A_GATEWAY_BEARER_TOKEN` in that file. The launch script reads
+the `Agent Comms A2A Gateway` item from the 1Password Agents vault through the
+shared `op-agents run` wrapper. Secret retrieval is fail-closed: if 1Password
+is unavailable, the gateway process is not started and launchd retries it.
 
 Then load:
 
