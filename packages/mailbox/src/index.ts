@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 
 export const DEFAULT_AGENT_MAIL_DIR = path.join(os.homedir(), '.agent-comms', 'mailbox');
 
-export type AgentMailType = 'question' | 'decision_request' | 'handoff' | 'status' | 'artifact' | 'note';
+export type AgentMailType = 'question' | 'decision_request' | 'handoff' | 'status' | 'artifact' | 'note' | 'alert';
 export type AgentMailPriority = 'low' | 'normal' | 'high';
 export type AgentMailStatus = 'new' | 'acked' | 'closed';
 export type AgentMailEventType = 'created' | 'acked' | 'replied' | 'closed';
@@ -18,6 +18,7 @@ const AGENT_MAIL_TYPES: readonly AgentMailType[] = [
   'status',
   'artifact',
   'note',
+  'alert',
 ];
 const AGENT_MAIL_PRIORITIES: readonly AgentMailPriority[] = ['low', 'normal', 'high'];
 

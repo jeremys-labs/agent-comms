@@ -79,7 +79,7 @@ Environment:
   AGENT_MAIL_DIR            Directory holding the shared agent_mail.db (required)
   AGENT_MAIL_ALLOW_DEFAULT  Set to 1 to opt into the default dir when AGENT_MAIL_DIR is unset
 
-Types: question, decision_request, handoff, status, artifact, note
+Types: question, decision_request, handoff, status, artifact, note, alert
 
 Handoff bodies must include non-empty lines for: Owner, Next action, Artifact,
 and Verification status.

@@ -35,6 +35,22 @@ describe('agent-mail CLI help', () => {
 });
 
 describe('agent-mail CLI handoffs', () => {
+  it('persists machine alerts through the real CLI contract', () => {
+    const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mail-cli-'));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ['--import', 'tsx', cliPath, 'send', '--from', 'isla', '--to', 'isla', '--type', 'alert', '--priority', 'high', '--subject', 'Delivery FAILED: planted', '--body', 'Planted failure.'],
+        { encoding: 'utf8', env: { ...process.env, AGENT_MAIL_DIR: mailDir } },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('"type": "alert"');
+      expect(result.stdout).toContain('"priority": "high"');
+    } finally {
+      fs.rmSync(mailDir, { recursive: true, force: true });
+    }
+  });
+
   it('allows self-addressed loop mail; runtime wake suppression owns containment', () => {
     const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mail-cli-'));
     try {

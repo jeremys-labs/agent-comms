@@ -108,6 +108,22 @@ describe('agent mail', () => {
     expect(store.getThread(original.correlationId)).toHaveLength(2);
     store.close();
   });
+
+  it('accepts machine-generated alert mail as a distinct searchable type', () => {
+    const store = createAgentMailStore(dbPath);
+    const message = store.send({
+      fromAgent: 'isla',
+      toAgent: 'isla',
+      type: 'alert',
+      priority: 'high',
+      subject: 'Delivery FAILED: job-a',
+      bodyMd: 'A planted delivery failure was detected.',
+    });
+
+    expect(message).toMatchObject({ type: 'alert', priority: 'high' });
+    expect(store.listInbox({ agent: 'isla', status: 'new' })[0]?.type).toBe('alert');
+    store.close();
+  });
 });
 
 describe('agent mail hardening', () => {
