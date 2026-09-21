@@ -2,9 +2,19 @@ import fs from 'fs';
 import path from 'path';
 import type { DiscordBridgeInboxEntry } from '../types/bridge.js';
 
-interface BridgeState {
+export interface BridgeState {
+  /** Cursor used as the Discord REST `after` parameter. Most recent id per subscription. */
   lastSeenMessageIds: Record<string, string>;
+  /**
+   * Every message id we have actually delivered, per subscription (bounded ring).
+   * The cursor alone cannot answer "have I delivered this?" — only "was this the
+   * most recent one?" — so a message the cursor has moved past was re-delivered
+   * whenever a concurrent backfill was still holding an older cursor.
+   */
+  seenMessageIds: Record<string, string[]>;
 }
+
+const MAX_SEEN_IDS_PER_SUBSCRIPTION = 500;
 
 function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -21,9 +31,13 @@ function inboxDir(contentRoot: string): string {
 export function readBridgeState(contentRoot: string): BridgeState {
   const filePath = statePath(contentRoot);
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as BridgeState;
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Partial<BridgeState>;
+    return {
+      lastSeenMessageIds: parsed.lastSeenMessageIds ?? {},
+      seenMessageIds: parsed.seenMessageIds ?? {},
+    };
   } catch {
-    return { lastSeenMessageIds: {} };
+    return { lastSeenMessageIds: {}, seenMessageIds: {} };
   }
 }
 
@@ -31,6 +45,16 @@ export function markSeen(contentRoot: string, subscriptionKey: string, messageId
   ensureDir(path.dirname(statePath(contentRoot)));
   const current = readBridgeState(contentRoot);
   current.lastSeenMessageIds[subscriptionKey] = messageId;
+
+  const seen = current.seenMessageIds[subscriptionKey] ?? [];
+  if (!seen.includes(messageId)) {
+    seen.push(messageId);
+    if (seen.length > MAX_SEEN_IDS_PER_SUBSCRIPTION) {
+      seen.splice(0, seen.length - MAX_SEEN_IDS_PER_SUBSCRIPTION);
+    }
+  }
+  current.seenMessageIds[subscriptionKey] = seen;
+
   const target = statePath(contentRoot);
   const tmp = `${target}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(current, null, 2));
@@ -43,7 +67,8 @@ export function getLastSeen(contentRoot: string, subscriptionKey: string): strin
 
 export function hasSeen(contentRoot: string, subscriptionKey: string, messageId: string): boolean {
   const current = readBridgeState(contentRoot);
-  return current.lastSeenMessageIds[subscriptionKey] === messageId;
+  if (current.lastSeenMessageIds[subscriptionKey] === messageId) return true;
+  return (current.seenMessageIds[subscriptionKey] ?? []).includes(messageId);
 }
 
 export function appendInboxEntry(contentRoot: string, entry: DiscordBridgeInboxEntry): string {
