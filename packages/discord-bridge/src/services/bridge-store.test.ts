@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appendInboxEntry, hasSeen, markSeen, readBridgeState } from './bridge-store.js';
+import { appendInboxEntry, getLastSeen, hasSeen, markSeen, readBridgeState } from './bridge-store.js';
 
 describe('discord bridge store', () => {
   let tmpDir: string;
@@ -56,5 +56,37 @@ describe('discord bridge store', () => {
     const leftovers = fs.readdirSync(bridgeDir).filter((name) => name.startsWith('state.json') && name !== 'state.json');
     expect(leftovers).toEqual([]);
     expect(readBridgeState(tmpDir).lastSeenMessageIds['marcus:c1']).toBe('m1');
+  });
+
+  it('still recognises a message after a later message is marked seen (duplicate-inbound defect)', () => {
+    markSeen(tmpDir, 'marcus:c1', 'm1');
+    markSeen(tmpDir, 'marcus:c1', 'm2');
+
+    // m2 advanced the cursor, but m1 was genuinely delivered and must never be re-delivered.
+    expect(hasSeen(tmpDir, 'marcus:c1', 'm1')).toBe(true);
+    expect(hasSeen(tmpDir, 'marcus:c1', 'm2')).toBe(true);
+  });
+
+  it('keeps the last-seen cursor pointing at the most recent message', () => {
+    markSeen(tmpDir, 'marcus:c1', 'm1');
+    markSeen(tmpDir, 'marcus:c1', 'm2');
+
+    expect(getLastSeen(tmpDir, 'marcus:c1')).toBe('m2');
+  });
+
+  it('bounds how many seen ids it retains per subscription', () => {
+    for (let i = 0; i < 600; i += 1) markSeen(tmpDir, 'marcus:c1', `m${i}`);
+
+    const retained = readBridgeState(tmpDir).seenMessageIds?.['marcus:c1'] ?? [];
+    expect(retained.length).toBeGreaterThan(1);
+    expect(retained.length).toBeLessThanOrEqual(500);
+    expect(hasSeen(tmpDir, 'marcus:c1', 'm599')).toBe(true);
+    expect(hasSeen(tmpDir, 'marcus:c1', 'm598')).toBe(true);
+  });
+
+  it('does not leak seen ids across subscriptions', () => {
+    markSeen(tmpDir, 'marcus:c1', 'm1');
+
+    expect(hasSeen(tmpDir, 'isla:c1', 'm1')).toBe(false);
   });
 });
