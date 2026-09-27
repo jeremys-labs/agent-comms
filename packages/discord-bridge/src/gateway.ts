@@ -16,6 +16,8 @@ import { backfillBindingMessages, subscriptionKey } from './services/discord-res
 import { wakeAgentRuntime } from './services/runtime-wake.js';
 import { captureKnowledgeGapReply } from './services/knowledge-gap-capture.js';
 import { formatDiscordBridgeIdentity } from './bridge-identity.js';
+import { createOutboundServer } from './outbound-server.js';
+import { loadOutboundPolicyRegistry } from './services/outbound-policy.js';
 
 const contentRoot = resolveContentRoot();
 ensureBridgeDirs(contentRoot);
@@ -34,70 +36,10 @@ const backfillIntervalMs = Number(process.env.DISCORD_BRIDGE_BACKFILL_INTERVAL_M
 const socketPath = process.env.DISCORD_BRIDGE_SOCKET_PATH ?? '/tmp/agent-discord-bridge.sock';
 const localAddress = process.env.DISCORD_BRIDGE_LOCAL_ADDRESS;
 
-type OutboundRequest = {
-  agentKey?: string;
-  bindingName?: string;
-  chat_id?: string;
-  channelId?: string;
-  text?: string;
-  files?: string[];
-  reply_to?: string;
-};
-
-type HistoryRequest = {
-  agentKey?: string;
-  bindingName?: string;
-  chat_id?: string;
-  channelId?: string;
-  limit?: number;
-  before?: string;
-  after?: string;
-  around?: string;
-};
-
-function findOutboundBinding(request: OutboundRequest): typeof bindings[number] | null {
-  const channelId = request.chat_id ?? request.channelId;
-  if (!channelId) return null;
-
-  return bindings.find((binding) => {
-    if (request.bindingName && binding.name !== request.bindingName) return false;
-    return binding.subscriptions.some((subscription) => (
-      subscription.channelId === channelId &&
-      (!request.agentKey || subscription.agentKey === request.agentKey)
-    ));
-  }) ?? null;
-}
-
-function findHistoryBinding(request: HistoryRequest): typeof bindings[number] | null {
-  const channelId = request.chat_id ?? request.channelId;
-  if (!channelId) return null;
-
-  return bindings.find((binding) => {
-    if (request.bindingName && binding.name !== request.bindingName) return false;
-    return binding.subscriptions.some((subscription) => (
-      (subscription.threadId ?? subscription.channelId) === channelId &&
-      (!request.agentKey || subscription.agentKey === request.agentKey)
-    ));
-  }) ?? null;
-}
-
 type DiscordFilePart = {
   filename: string;
   content: Buffer;
 };
-
-function validateRequestFiles(files: unknown): string[] {
-  if (files === undefined) return [];
-  if (!Array.isArray(files)) throw new Error('files must be an array');
-  if (files.length > 10) throw new Error('Discord supports at most 10 file attachments');
-  return files.map((filePath) => {
-    if (typeof filePath !== 'string' || filePath.length === 0) throw new Error('files must contain path strings');
-    if (!path.isAbsolute(filePath)) throw new Error(`file path must be absolute: ${filePath}`);
-    const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : null;
-    if (!stat?.isFile()) throw new Error(`file path is not a readable file: ${filePath}`);
-    return filePath;
-  });
-}
 
 function buildDiscordJsonBody(text: string | undefined, replyTo?: string): Buffer {
   return Buffer.from(JSON.stringify({
@@ -226,115 +168,18 @@ async function sendDiscordMessage(token: string, channelId: string, text: string
   return { id: lastId, attachmentCount: lastAttachmentCount };
 }
 
-function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.setEncoding('utf8');
-    req.on('data', (chunk) => {
-      body += chunk;
-      if (body.length > 100_000) {
-        reject(new Error('request body too large'));
-        req.destroy();
-      }
-    });
-    req.on('end', () => {
-      try {
-        resolve(JSON.parse(body || '{}') as T);
-      } catch (error) {
-        reject(error);
-      }
-    });
-    req.on('error', reject);
-  });
+const outboundPolicyState = loadOutboundPolicyRegistry();
+if (!outboundPolicyState.ok) {
+  console.error(`[discord-bridge] ${outboundPolicyState.error}; interactive sends will fail closed`);
 }
-
-const outboundServer = http.createServer(async (req, res) => {
-  try {
-    if (req.method !== 'POST' || (req.url !== '/send' && req.url !== '/history')) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'not found' }));
-      return;
-    }
-
-    if (req.url === '/history') {
-      const request = await readJsonBody<HistoryRequest>(req);
-      const channelId = request.chat_id ?? request.channelId;
-      if (!channelId) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'chat_id is required' }));
-        return;
-      }
-
-      const binding = findHistoryBinding(request);
-      if (!binding) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: `channel ${channelId} is not allowlisted for ${request.agentKey ?? 'requested agent'}` }));
-        return;
-      }
-
-      const token = process.env[binding.tokenEnvVar];
-      if (!token) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: `missing token env var ${binding.tokenEnvVar}` }));
-        return;
-      }
-
-      const messages = await fetchDiscordChannelHistory(token, {
-        channelId,
-        limit: request.limit,
-        before: request.before,
-        after: request.after,
-        around: request.around,
-      });
-      console.log(`[discord-bridge] [${binding.name}] read ${messages.length} history message(s) for ${request.agentKey ?? 'unknown'} <- ${channelId}`);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(messages));
-      return;
-    }
-
-    const request = await readJsonBody<OutboundRequest>(req);
-    const channelId = request.chat_id ?? request.channelId;
-    const files = validateRequestFiles(request.files);
-    if (!channelId || (!request.text && files.length === 0)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'chat_id and text or files are required' }));
-      return;
-    }
-
-    const binding = findOutboundBinding(request);
-    if (!binding) {
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `channel ${channelId} is not allowlisted for ${request.agentKey ?? 'requested agent'}` }));
-      return;
-    }
-
-    const token = process.env[binding.tokenEnvVar];
-    if (!token) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `missing token env var ${binding.tokenEnvVar}` }));
-      return;
-    }
-
-    const sent = await sendDiscordMessage(token, channelId, request.text, files, request.reply_to);
-    // Breadcrumb for the inbound-reply reconciler: written only after a
-    // successful Discord POST (a failed send writes nothing).
-    recordOutboundSent(contentRoot, {
-      sent_at: new Date().toISOString(),
-      agent: request.agentKey ?? 'unknown',
-      chat_id: channelId,
-      message_id: sent.id,
-      binding: binding.name,
-    });
-    console.log(`[discord-bridge] [${binding.name}] sent ${sent.id} for ${request.agentKey ?? 'unknown'} -> ${channelId} (${sent.attachmentCount} attachment(s))`);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, id: sent.id, bindingName: binding.name, attachmentCount: sent.attachmentCount }));
-  } catch (error) {
-    // Delivery-failure log. The shared delivery-health logger referenced in the
-    // harness review lives in mcc-tmux, not this repo, so record to stderr here.
-    console.error('[discord-bridge] outbound delivery failed:', error);
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: String(error) }));
-  }
+const outboundServer = createOutboundServer({
+  bindings,
+  contentRoot,
+  env: process.env,
+  policyState: outboundPolicyState,
+  sendMessage: sendDiscordMessage,
+  fetchHistory: fetchDiscordChannelHistory,
+  recordOutbound: recordOutboundSent,
 });
 
 function listenOnSocket(): void {

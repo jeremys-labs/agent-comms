@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "policies": [
+    { "channelId": "1493425484036309092", "outboundClass": "interactive_reply", "maxChars": 700, "label": "Isla / Jeremy DM" },
+    { "channelId": "1492892431543308439", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Marcus channel" },
+    { "channelId": "1491965464736436366", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Eli channel" },
+    { "channelId": "1494170649651052554", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Nova channel" },
+    { "channelId": "1492159200531583067", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Remy / Jeremy DM" },
+    { "channelId": "1492537718876672130", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Lena / Jeremy DM" },
+    { "channelId": "1495580090682183820", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Val channel" },
+    { "channelId": "1492551894214905886", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Zara channel" },
+    { "channelId": "1501436731264602223", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Hercule channel" },
+    { "channelId": "1508217656958779494", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Hank channel" },
+    { "channelId": "1531066499161133247", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Simone / Jeremy DM" },
+    { "channelId": "1521320561156948058", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Cecelia channel" },
+    { "channelId": "1531066562172293200", "outboundClass": "interactive_reply", "maxChars": 2000, "label": "Dana channel" }
+  ]
+}

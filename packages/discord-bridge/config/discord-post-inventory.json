@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "roots": [
+    { "name": "agent-comms", "path": "/Volumes/Repo-Drive/src/agent-comms" },
+    { "name": "mcc-tmux", "path": "/Volumes/Repo-Drive/src/mcc-tmux" },
+    { "name": "agent-supervisor", "path": "/Volumes/Repo-Drive/src/agent-supervisor" },
+    { "name": "agents", "path": "/Volumes/Repo-Drive/agents" }
+  ],
+  "allowlist": [
+    {
+      "root": "agent-comms",
+      "path": "packages/discord-bridge/src/gateway.ts",
+      "disposition": "canonical_transport",
+      "reason": "The bridge performs the one canonical Discord message POST after policy approval."
+    },
+    {
+      "root": "mcc-tmux",
+      "path": "packages/server/src/services/open-brain-grooming-digest.ts",
+      "disposition": "live_noninteractive_bypass",
+      "reason": "Two enabled Open Brain digest jobs send scheduled summaries directly; they are outside the interactive-reply guarantee until migrated."
+    },
+    {
+      "root": "agents",
+      "path": "zara/bin/github-mike-monitor.mjs",
+      "disposition": "live_noninteractive_bypass",
+      "reason": "A loaded LaunchAgent posts automated GitHub monitoring alerts directly; it is outside the interactive-reply guarantee until migrated."
+    },
+    {
+      "root": "agents",
+      "path": "enzo/bin/nudge.sh",
+      "disposition": "dormant_bypass",
+      "reason": "The dormant Enzo agent has no active scheduler job, but its retained language-practice script can post directly if reactivated."
+    },
+    {
+      "root": "agents",
+      "path": "enzo/bin/sunday_summary.sh",
+      "disposition": "dormant_bypass",
+      "reason": "The dormant Enzo agent has no active scheduler job, but its retained weekly-summary script can post directly if reactivated."
+    }
+  ]
+}
