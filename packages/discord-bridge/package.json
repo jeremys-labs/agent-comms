@@ -16,10 +16,12 @@
   },
   "files": [
     "dist",
+    "config",
     "README.md"
   ],
   "scripts": {
     "build": "tsc",
+    "check:discord-post-boundary": "tsx src/check-discord-post-boundary.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "bridge": "tsx src/gateway.ts"
