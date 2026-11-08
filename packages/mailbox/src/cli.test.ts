@@ -103,8 +103,13 @@ describe('agent-mail CLI enforces the agent-time rule at the transport', () => {
     const journal = path.join(mailDir, 'j.jsonl');
     try {
       const r = send(mailDir, 'I will ship the fix tomorrow.', [], { DEFERRAL_GUARD_JOURNAL: journal });
-      expect(r.status).not.toBe(0);
+      // Exit 2 specifically: a POLICY REFUSAL, distinct from exit 1 for a usage
+      // error. It also must not arrive as an uncaught exception -- a stack trace
+      // reads as a broken tool rather than as a refusal.
+      expect(r.status).toBe(2);
       expect(r.stderr).toContain('agent-time rule');
+      expect(r.stderr).not.toContain('at readBody');
+      expect(r.stderr).not.toContain('Error:');
       // journalled with its own kind, so a run of these is visible
       const events = fs.readFileSync(journal, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
       expect(events.some((e) => e.kind === 'block' && e.source === 'agent-mail-cli')).toBe(true);

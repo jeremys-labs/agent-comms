@@ -115,15 +115,27 @@ function enforceAgentTimeRule(body: string, options: Map<string, string | boolea
 
   journalDeferralEvent('block', { hits });
   const lines = hits.slice(0, 5).map(([kind, word, snippet]) => `  - ${kind}: '${word}' in: ${snippet}`);
-  throw new Error(
+  // Written to stderr and exited DIRECTLY rather than thrown. A thrown Error
+  // reached the top level as an uncaught exception with a Node stack trace (isla,
+  // 2026-11-07), and it exited 1 -- the same code as a usage error.
+  //
+  // That is worse than cosmetic. A stack trace reads as "the tool broke", not
+  // "rewrite your message", so a DELIBERATE REFUSAL gets misread as a
+  // malfunction; and sharing exit 1 with usage errors means no caller can tell a
+  // policy refusal from a malformed command. A refusal is a completed operation
+  // that said no, and it needs its own code.
+  //
+  //   2 = refused by this rule      1 = usage or any other failure
+  process.stderr.write(
     'BLOCKED (agent-time rule, ~/.claude/rules/agent-time-and-deferral.md): this message ' +
       'defers work or estimates it in human time.\n' +
       `${lines.join('\n')}\n` +
       'Agents work around the clock. Rewrite with a minutes estimate and do the work now. ' +
       'If there is a REAL external blocker (a human\'s answer, a third party, a scheduled ' +
       'event, a usage cap, or named higher-priority work), pass it as metadata: ' +
-      '--waits-on "<the blocker>".',
+      '--waits-on "<the blocker>".\n',
   );
+  process.exit(2);
 }
 
 function readBody(options: Map<string, string | boolean>): string {
