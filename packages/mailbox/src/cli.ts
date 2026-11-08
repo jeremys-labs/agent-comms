@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import fs from 'fs';
+import path from 'path';
+import { spawnSync } from 'child_process';
 import { createAgentMailStore, type AgentMailPriority, type AgentMailStatus, type AgentMailType } from './index.js';
 import { buildBranchReviewManifest } from './branch-review-manifest.js';
 import { validateSingleRecipient } from './recipients.js';
@@ -46,12 +48,93 @@ function getBoolean(options: Map<string, string | boolean>, key: string): boolea
   return options.get(key) === true;
 }
 
+/**
+ * The agent-time deferral rule, enforced at the TRANSPORT rather than per runtime.
+ *
+ * Rule: ~/.claude/rules/agent-time-and-deferral.md. It used to run only as a Claude
+ * PreToolUse Bash hook, so Codex turns and MCP tools bypassed it entirely -- the
+ * structural gap in hercule's review (A.4: "transport cannot be fixed inside a Bash
+ * hook"). Enforcing it here means it applies to every runtime that sends mail.
+ *
+ * The REGEXES ARE NOT DUPLICATED HERE. This shells out to the one implementation in
+ * SHARED/hooks/deferral_check.py, which the Bash hook imports directly. A second
+ * copy in TypeScript is how the two surfaces would drift.
+ *
+ * FAILS OPEN, deliberately (isla's decision): mail must not depend on the guard
+ * being healthy, so a missing interpreter or a broken checker warns and permits.
+ * But a fail-open is JOURNALLED with its own kind, because stderr alone is a log
+ * nobody reads -- a broken checker has to show up as a run of fail-opens rather
+ * than as a quiet, compliant fleet.
+ */
+const DEFERRAL_CHECKER =
+  process.env.DEFERRAL_CHECK ?? '/Volumes/Repo-Drive/agents/SHARED/hooks/deferral_check.py';
+const DEFERRAL_JOURNAL =
+  process.env.DEFERRAL_GUARD_JOURNAL ?? '/Volumes/Repo-Drive/agents/SHARED/reports/deferral-guard.jsonl';
+
+function journalDeferralEvent(kind: string, fields: Record<string, unknown>): void {
+  // Written here rather than through the Python module for one reason: when the
+  // interpreter is what failed, Python cannot be the thing that records it.
+  try {
+    fs.mkdirSync(path.dirname(DEFERRAL_JOURNAL), { recursive: true });
+    fs.appendFileSync(
+      DEFERRAL_JOURNAL,
+      `${JSON.stringify({ ts: Date.now() / 1000, kind, source: 'agent-mail-cli', ...fields })}\n`,
+    );
+  } catch {
+    /* logging must never break a send */
+  }
+}
+
+function enforceAgentTimeRule(body: string, options: Map<string, string | boolean>): void {
+  const waitsOn = getOptional(options, 'waits-on');
+  if (waitsOn && waitsOn.length >= 7) return; // a named external blocker, kept in metadata
+
+  const result = spawnSync(process.env.DEFERRAL_CHECK_PYTHON ?? '/usr/bin/python3',
+    [DEFERRAL_CHECKER, '--stdin', '--source', 'agent-mail-cli'],
+    { input: body, encoding: 'utf8' });
+
+  if (result.error || result.status !== 0) {
+    const reason = result.error ? String(result.error) : `checker exit ${result.status}`;
+    journalDeferralEvent('fail-open', { reason });
+    process.stderr.write(
+      `agent-time rule NOT CHECKED (${reason}). Sending anyway; the event is in ` +
+        `${DEFERRAL_JOURNAL}.\n`,
+    );
+    return;
+  }
+
+  let hits: Array<[string, string, string]> = [];
+  try {
+    hits = (JSON.parse(result.stdout).hits ?? []) as Array<[string, string, string]>;
+  } catch (err) {
+    journalDeferralEvent('fail-open', { reason: `unparseable checker output: ${String(err)}` });
+    process.stderr.write('agent-time rule NOT CHECKED (unparseable checker output).\n');
+    return;
+  }
+  if (hits.length === 0) return;
+
+  journalDeferralEvent('block', { hits });
+  const lines = hits.slice(0, 5).map(([kind, word, snippet]) => `  - ${kind}: '${word}' in: ${snippet}`);
+  throw new Error(
+    'BLOCKED (agent-time rule, ~/.claude/rules/agent-time-and-deferral.md): this message ' +
+      'defers work or estimates it in human time.\n' +
+      `${lines.join('\n')}\n` +
+      'Agents work around the clock. Rewrite with a minutes estimate and do the work now. ' +
+      'If there is a REAL external blocker (a human\'s answer, a third party, a scheduled ' +
+      'event, a usage cap, or named higher-priority work), pass it as metadata: ' +
+      '--waits-on "<the blocker>".',
+  );
+}
+
 function readBody(options: Map<string, string | boolean>): string {
   const body = getOptional(options, 'body');
   const bodyFile = getOptional(options, 'body-file');
-  if (bodyFile) return fs.readFileSync(bodyFile, 'utf8');
-  if (body) return body;
-  throw new Error('Missing body content. Use --body or --body-file');
+  const resolved = bodyFile ? fs.readFileSync(bodyFile, 'utf8') : body;
+  if (!resolved) throw new Error('Missing body content. Use --body or --body-file');
+  // Enforced HERE because this is the single function both `send` and `reply` use
+  // to obtain a body, so a future subcommand cannot acquire one unchecked.
+  enforceAgentTimeRule(resolved, options);
+  return resolved;
 }
 
 function printJson(value: unknown): void {
@@ -65,6 +148,7 @@ Usage: agent-mail <command> [options]
 Commands:
   send    --from <agent> --to <agent> --type <type> --subject <s> (--body <md> | --body-file <path>)
           [--project <p>] [--priority low|normal|high] [--requires-response]
+          [--waits-on "<external blocker>"]   (agent-time rule override, kept in metadata)
   inbox   --agent <agent> [--status new|acked|closed]   (closed excluded unless --status given)
   ack     --agent <agent> --id <messageId>
   reply   --agent <agent> --id <messageId> (--body <md> | --body-file <path>)
@@ -130,6 +214,7 @@ function main(): void {
           relatedProject: getOptional(options, 'project'),
           requiresResponse: getBoolean(options, 'requires-response'),
           priority: (getOptional(options, 'priority') as AgentMailPriority | undefined) ?? 'normal',
+          waitsOn: getOptional(options, 'waits-on'),
         });
         printJson(message);
         break;
@@ -155,6 +240,7 @@ function main(): void {
           subject: getOptional(options, 'subject'),
           requiresResponse: getBoolean(options, 'requires-response'),
           priority: getOptional(options, 'priority') as AgentMailPriority | undefined,
+          waitsOn: getOptional(options, 'waits-on'),
         });
         printJson(message);
         break;

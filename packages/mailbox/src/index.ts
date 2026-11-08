@@ -64,6 +64,13 @@ export interface SendAgentMailInput {
   priority?: AgentMailPriority;
   correlationId?: string;
   links?: AgentMailLinkInput[];
+  /**
+   * The external blocker that justifies a deferral in the body, recorded as
+   * MESSAGE METADATA rather than appended to the body (isla's constraint): the
+   * recipient reads the message, and the audit trail keeps the justification.
+   * Set from `--waits-on` on the send CLIs.
+   */
+  waitsOn?: string;
 }
 
 export interface ReplyAgentMailInput {
@@ -74,6 +81,8 @@ export interface ReplyAgentMailInput {
   requiresResponse?: boolean;
   priority?: AgentMailPriority;
   links?: AgentMailLinkInput[];
+  /** See SendAgentMailInput.waitsOn. */
+  waitsOn?: string;
 }
 
 export interface ListAgentMailInput {
@@ -320,6 +329,20 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
       insertLink.run(createId('lnk'), id, link.label, link.target);
     }
     insertEvent.run(createId('evt'), id, 'created', input.fromAgent, null, now);
+    // Recorded HERE because this transaction is the single place every message is
+    // created -- `reply` delegates to it -- so a future send path cannot acquire a
+    // body without its waits-on justification being captured alongside.
+    const waitsOn = input.waitsOn?.trim();
+    if (waitsOn) {
+      insertEvent.run(
+        createId('evt'),
+        id,
+        'waits_on',
+        input.fromAgent,
+        JSON.stringify({ blocker: waitsOn }),
+        now,
+      );
+    }
     return mapMessageRow(selectMessage.get(id) as MessageRow);
   });
 
@@ -335,6 +358,7 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
       priority: input.priority ?? 'normal',
       correlationId: original.correlation_id,
       links: input.links,
+      waitsOn: input.waitsOn,
     });
     insertEvent.run(
       createId('evt'),
