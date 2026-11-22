@@ -293,6 +293,100 @@ describe('agent mail hardening', () => {
   });
 });
 
+describe('agent mail reply authorization', () => {
+  let tmpDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mail-reply-auth-'));
+    dbPath = path.join(tmpDir, 'agent_mail.db');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function counts() {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      return {
+        messages: (db.prepare('SELECT count(*) AS n FROM messages').get() as { n: number }).n,
+        events: (db.prepare('SELECT count(*) AS n FROM message_events').get() as { n: number }).n,
+      };
+    } finally {
+      db.close();
+    }
+  }
+
+  it('allows only the original recipient to reply and preserves self-note replies', () => {
+    const store = createAgentMailStore(dbPath);
+    const ordinary = store.send({
+      fromAgent: 'isla',
+      toAgent: 'hercule',
+      type: 'question',
+      subject: 'ordinary',
+      bodyMd: 'ordinary',
+    });
+    const ordinaryReply = store.reply({
+      actorAgent: 'hercule',
+      messageId: ordinary.id,
+      bodyMd: 'reply',
+    });
+    expect(ordinaryReply.toAgent).toBe('isla');
+
+    const selfNote = store.send({
+      fromAgent: 'isla',
+      toAgent: 'isla',
+      type: 'note',
+      subject: 'self',
+      bodyMd: 'self',
+    });
+    const selfReply = store.reply({
+      actorAgent: 'isla',
+      messageId: selfNote.id,
+      bodyMd: 'self reply',
+    });
+    expect(selfReply.toAgent).toBe('isla');
+    store.close();
+  });
+
+  it.each([
+    ['the original sender', 'isla'],
+    ['a third party', 'remy'],
+  ])('refuses %s before inserting a reply row or replied event', (_label, actorAgent) => {
+    const store = createAgentMailStore(dbPath);
+    const original = store.send({
+      fromAgent: 'isla',
+      toAgent: 'hercule',
+      type: 'question',
+      subject: 'authorization',
+      bodyMd: 'authorization',
+    });
+    const before = counts();
+
+    expect(() => store.reply({ actorAgent, messageId: original.id, bodyMd: 'injected' }))
+      .toThrow(`you are not a recipient of ${original.id}; use send --to <agent>`);
+    expect(counts()).toEqual(before);
+    expect(store.getThread(original.correlationId)).toHaveLength(1);
+    expect(store.listEvents(original.id).map((event) => event.eventType)).not.toContain('replied');
+    store.close();
+  });
+
+  it('keeps a declared send to self as exactly one message', () => {
+    const store = createAgentMailStore(dbPath);
+    const sent = store.send({
+      fromAgent: 'isla',
+      toAgent: 'isla',
+      type: 'note',
+      subject: 'declared self-send',
+      bodyMd: 'one row',
+    });
+    expect(store.getThread(sent.correlationId)).toHaveLength(1);
+    expect(counts()).toEqual({ messages: 1, events: 1 });
+    store.close();
+  });
+});
+
 describe('agent mail hardening', () => {
   let tmpDir: string;
   let dbPath: string;

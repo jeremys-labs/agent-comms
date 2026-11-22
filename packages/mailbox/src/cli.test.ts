@@ -84,6 +84,89 @@ describe('agent-mail CLI handoffs', () => {
   });
 });
 
+describe('agent-mail CLI reply authorization', () => {
+  function cli(mailDir: string, args: string[]) {
+    return spawnSync(
+      process.execPath,
+      ['--import', 'tsx', cliPath, ...args],
+      { encoding: 'utf8', env: { ...process.env, AGENT_MAIL_DIR: mailDir } },
+    );
+  }
+
+  function send(mailDir: string, from: string, to: string) {
+    const result = cli(mailDir, [
+      'send', '--from', from, '--to', to, '--type', 'note',
+      '--subject', 'reply authorization', '--body', 'body',
+    ]);
+    expect(result.status).toBe(0);
+    return JSON.parse(result.stdout) as { id: string; correlationId: string };
+  }
+
+  function counts(mailDir: string) {
+    const db = new Database(path.join(mailDir, 'agent_mail.db'), { readonly: true });
+    try {
+      return {
+        messages: (db.prepare('SELECT count(*) AS n FROM messages').get() as { n: number }).n,
+        events: (db.prepare('SELECT count(*) AS n FROM message_events').get() as { n: number }).n,
+      };
+    } finally {
+      db.close();
+    }
+  }
+
+  it('allows recipient and self-note replies through the real CLI', () => {
+    const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mail-cli-reply-auth-'));
+    try {
+      const ordinary = send(mailDir, 'isla', 'hercule');
+      const ordinaryReply = cli(mailDir, [
+        'reply', '--agent', 'hercule', '--id', ordinary.id, '--body', 'ordinary reply',
+      ]);
+      expect(ordinaryReply.status).toBe(0);
+      expect(JSON.parse(ordinaryReply.stdout).toAgent).toBe('isla');
+
+      const selfNote = send(mailDir, 'isla', 'isla');
+      const selfReply = cli(mailDir, [
+        'reply', '--agent', 'isla', '--id', selfNote.id, '--body', 'self reply',
+      ]);
+      expect(selfReply.status).toBe(0);
+      expect(JSON.parse(selfReply.stdout).toAgent).toBe('isla');
+    } finally {
+      fs.rmSync(mailDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['the original sender', 'isla'],
+    ['a third party', 'remy'],
+  ])('refuses %s through the real CLI without changing row counts', (_label, actorAgent) => {
+    const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mail-cli-reply-auth-'));
+    try {
+      const original = send(mailDir, 'isla', 'hercule');
+      const before = counts(mailDir);
+      const result = cli(mailDir, [
+        'reply', '--agent', actorAgent, '--id', original.id, '--body', 'injected',
+      ]);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        `you are not a recipient of ${original.id}; use send --to <agent>`,
+      );
+      expect(counts(mailDir)).toEqual(before);
+    } finally {
+      fs.rmSync(mailDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a declared CLI send to self as exactly one message', () => {
+    const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-mail-cli-reply-auth-'));
+    try {
+      send(mailDir, 'isla', 'isla');
+      expect(counts(mailDir)).toEqual({ messages: 1, events: 1 });
+    } finally {
+      fs.rmSync(mailDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('agent-mail CLI enforces the agent-time rule at the transport', () => {
   // The rule only ran as a Claude PreToolUse Bash hook, so Codex turns and MCP
   // tools bypassed it entirely. Enforced in readBody(), the single function both

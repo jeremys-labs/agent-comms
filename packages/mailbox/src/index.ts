@@ -394,6 +394,11 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
     reply(input) {
       const original = selectMessage.get(input.messageId) as MessageRow | undefined;
       if (!original) throw new Error(`Message not found: ${input.messageId}`);
+      if (input.actorAgent !== original.to_agent) {
+        throw new Error(
+          `you are not a recipient of ${input.messageId}; use send --to <agent>`,
+        );
+      }
       return insertReplyWithEvent(input, original);
     },
 
