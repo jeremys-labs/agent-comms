@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { resolveJournal } from './cli.js';
+import { resolveJournal, resolveJournalRoute } from './cli.js';
 import { describe, expect, it } from 'vitest';
 
 const cliPath = fileURLToPath(new URL('./cli.ts', import.meta.url));
@@ -97,7 +97,7 @@ describe('journal routing (shared case table)', () => {
   const CASES_FILE =
     '/Volumes/Repo-Drive/agents/SHARED/hooks/journal-routing-cases.json';
 
-  type Case = { name: string; env: Record<string, string>; expect: string };
+  type Case = { name: string; env: Record<string, string>; expect: string; why: string };
 
   const table = JSON.parse(fs.readFileSync(CASES_FILE, 'utf8')) as { cases: Case[] };
 
@@ -119,6 +119,68 @@ describe('journal routing (shared case table)', () => {
     expect(table.cases.length).toBeGreaterThan(5);
     expect(table.cases.some((c) => c.expect === 'live')).toBe(true);
     expect(table.cases.some((c) => c.expect === 'fixtures')).toBe(true);
+  });
+
+  it('every shared case pins a route string', () => {
+    // Without this, a table missing `why` would make the vocabulary assertions below
+    // compare undefined to undefined and pass by checking nothing.
+    for (const c of table.cases) {
+      expect(typeof c.why).toBe('string');
+      expect(c.why.length).toBeGreaterThan(0);
+    }
+  });
+
+  it.each(table.cases.map((c) => [c.name, c] as [string, Case]))(
+    'stamps the same journal_route as Python: %s',
+    (_name, c) => {
+      // hercule's acceptance criterion on the stamp: the field AND the vocabulary must
+      // match Python, or isla's one-line quarantine filter still cannot see TS rows and
+      // the hole has moved rather than closed. The expected strings in the table were
+      // GENERATED from deferral_check.resolve_journal, not hand-typed.
+      const saved = { ...process.env };
+      try {
+        for (const k of ['DEFERRAL_GUARD_JOURNAL', 'DEFERRAL_GUARD_PROBE']) {
+          delete process.env[k];
+        }
+        process.env.DEFERRAL_GUARD_REPORTS_DIR = REPORTS;
+        for (const [k, v] of Object.entries(c.env)) {
+          process.env[k] = v.replace(/\{REPORTS\}/g, REPORTS);
+        }
+        expect(resolveJournalRoute().why).toBe(c.why);
+      } finally {
+        for (const k of Object.keys(process.env)) delete process.env[k];
+        Object.assign(process.env, saved);
+      }
+    },
+  );
+
+  it('a WRITTEN row carries journal_route, not just the resolver', () => {
+    // Asserting resolveJournalRoute().why is NOT the same claim as asserting the writer
+    // stamps it. hercule's criterion is that TS WRITES journal_route on every route, so
+    // this drives the real CLI and reads the row off disk.
+    const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journal-route-write-'));
+    const journal = path.join(mailDir, 'j.jsonl');
+    const result = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', cliPath, 'send', '--from', 'marcus', '--to', 'isla',
+       '--type', 'note', '--subject', 's', '--body', 'I will ship it tomorrow.'],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, AGENT_MAIL_DIR: mailDir, DEFERRAL_GUARD_JOURNAL: journal },
+      },
+    );
+    expect(result.status).not.toBe(0);
+    const rows = fs
+      .readFileSync(journal, 'utf8')
+      .split('\n')
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      // Byte-equal to what Python stamps for an explicit path -- the cross-path
+      // quarantine filter depends on the vocabulary matching, not just the field existing.
+      expect(row.journal_route).toBe('explicit DEFERRAL_GUARD_JOURNAL');
+    }
   });
 
   it.each(table.cases.map((c) => [c.name, c] as [string, Case]))(

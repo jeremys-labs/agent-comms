@@ -121,14 +121,31 @@ function reportsDir(): string {
     || '/Volumes/Repo-Drive/agents/SHARED/reports';
 }
 
-export function resolveJournal(): string {
+// ONE branch structure, two accessors. The route STRING is not decoration: isla
+// quarantines test residue with a one-line filter on `journal_route`, so if this path
+// stamped different strings from Python's for the same environment, the filter would
+// silently cover only two of the three paths -- the hole would move, not close
+// (hercule's acceptance criterion). The strings therefore MIRROR
+// deferral_check.resolve_journal byte for byte, and the shared case table pins each one
+// so neither language can drift alone.
+export function resolveJournalRoute(): { path: string; why: string } {
   const explicit = (process.env.DEFERRAL_GUARD_JOURNAL ?? '').trim();
-  if (explicit) return explicit;
+  if (explicit) return { path: explicit, why: 'explicit DEFERRAL_GUARD_JOURNAL' };
   const probe = (process.env.DEFERRAL_GUARD_PROBE ?? '').trim().toLowerCase();
   if (probe && !['0', 'false', 'no'].includes(probe)) {
-    return `${reportsDir()}/deferral-guard.test-fixtures.jsonl`;
+    return {
+      path: `${reportsDir()}/deferral-guard.test-fixtures.jsonl`,
+      why: `DEFERRAL_GUARD_PROBE=${probe}`,
+    };
   }
-  return `${reportsDir()}/deferral-guard.jsonl`;
+  return {
+    path: `${reportsDir()}/deferral-guard.jsonl`,
+    why: 'no marker: live (fail-safe)',
+  };
+}
+
+export function resolveJournal(): string {
+  return resolveJournalRoute().path;
 }
 
 function journalDeferralEvent(kind: string, fields: Record<string, unknown>): void {
@@ -137,12 +154,21 @@ function journalDeferralEvent(kind: string, fields: Record<string, unknown>): vo
   // Resolved PER EVENT, not at module load: a harness that sets the marker after importing
   // must still be diverted, and resolving once at load is how it writes where it did not
   // intend to.
-  const target = resolveJournal();
+  const route = resolveJournalRoute();
   try {
-    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.mkdirSync(path.dirname(route.path), { recursive: true });
     fs.appendFileSync(
-      target,
-      `${JSON.stringify({ ts: Date.now() / 1000, kind, source: 'agent-mail-cli', ...fields })}\n`,
+      route.path,
+      `${JSON.stringify({
+        ts: Date.now() / 1000,
+        kind,
+        source: 'agent-mail-cli',
+        // Stamped on EVERY route, matching the Python writer's field and vocabulary, so a
+        // row from any of the three paths can be traced to the rule that placed it -- and
+        // so the quarantine filter is genuinely cross-path.
+        journal_route: route.why,
+        ...fields,
+      })}\n`,
     );
   } catch {
     /* logging must never break a send */
