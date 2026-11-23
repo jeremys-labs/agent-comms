@@ -2,7 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
-import { createAgentMailStore, type AgentMailPriority, type AgentMailStatus, type AgentMailType } from './index.js';
+import { AgentMailRefusal, createAgentMailStore, type AgentMailPriority, type AgentMailStatus, type AgentMailType } from './index.js';
 import { buildBranchReviewManifest } from './branch-review-manifest.js';
 import { validateSingleRecipient } from './recipients.js';
 
@@ -46,6 +46,38 @@ function getOptional(options: Map<string, string | boolean>, key: string): strin
 
 function getBoolean(options: Map<string, string | boolean>, key: string): boolean {
   return options.get(key) === true;
+}
+
+/**
+ * Exit codes. A REFUSAL gets its own code per rule, because a caller scripting
+ * this CLI has to be able to tell "the rules said no" from "you typed it wrong".
+ *
+ *   1 = usage, or any other failure (an uncaught throw lands here)
+ *   2 = refused: the agent-time deferral rule
+ *   3 = refused: not authorized
+ *
+ * These are an INTERFACE. Other agents branch on them, so a value here is not
+ * free to change once shipped.
+ */
+export const EXIT_REFUSED_AGENT_TIME = 2;
+export const EXIT_REFUSED_AUTHORIZATION = 3;
+
+/**
+ * Write a refusal and exit with its code -- the single path for every "the rules
+ * said no" outcome.
+ *
+ * This was inlined in `enforceAgentTimeRule` and is extracted here because the
+ * reply-authorization refusal needs the identical treatment, and two near-copies
+ * of "stderr then exit" is how one of them quietly goes back to throwing. One
+ * chokepoint that is tested beats two where only one is reachable.
+ *
+ * Exits DIRECTLY rather than throwing, which is the property being preserved: a
+ * throw reaches the top level as an uncaught exception with a Node stack trace,
+ * and a stack trace reads as "the tool broke" rather than "rewrite your command".
+ */
+function refuse(message: string, code: number): never {
+  process.stderr.write(message.endsWith('\n') ? message : `${message}\n`);
+  process.exit(code);
 }
 
 /**
@@ -126,16 +158,16 @@ function enforceAgentTimeRule(body: string, options: Map<string, string | boolea
   // that said no, and it needs its own code.
   //
   //   2 = refused by this rule      1 = usage or any other failure
-  process.stderr.write(
+  refuse(
     'BLOCKED (agent-time rule, ~/.claude/rules/agent-time-and-deferral.md): this message ' +
       'defers work or estimates it in human time.\n' +
       `${lines.join('\n')}\n` +
       'Agents work around the clock. Rewrite with a minutes estimate and do the work now. ' +
       'If there is a REAL external blocker (a human\'s answer, a third party, a scheduled ' +
       'event, a usage cap, or named higher-priority work), pass it as metadata: ' +
-      '--waits-on "<the blocker>".\n',
+      '--waits-on "<the blocker>".',
+    EXIT_REFUSED_AGENT_TIME,
   );
-  process.exit(2);
 }
 
 function readBody(options: Map<string, string | boolean>): string {
@@ -281,4 +313,20 @@ function main(): void {
   }
 }
 
-main();
+/**
+ * The store raises a refusal as a TYPE (`AgentMailRefusal`), and this is where it
+ * becomes an exit code. Caught at the top level rather than per-subcommand so a
+ * future command that refuses gets the clean path for free instead of having to
+ * remember it.
+ *
+ * Everything else still propagates untouched and exits 1 -- a genuine failure
+ * SHOULD print its stack, because unlike a refusal it is a thing to debug.
+ */
+try {
+  main();
+} catch (err) {
+  if (err instanceof AgentMailRefusal) {
+    refuse(`REFUSED: ${err.message}`, EXIT_REFUSED_AUTHORIZATION);
+  }
+  throw err;
+}

@@ -146,10 +146,22 @@ describe('agent-mail CLI reply authorization', () => {
       const result = cli(mailDir, [
         'reply', '--agent', actorAgent, '--id', original.id, '--body', 'injected',
       ]);
-      expect(result.status).not.toBe(0);
+      // Exit 3 SPECIFICALLY, and not merely non-zero. A refusal is a completed
+      // operation that said no, so it must be distinguishable by a scripting
+      // caller from exit 1 (usage / any other failure) and from exit 2 (the
+      // agent-time rule). `not.toBe(0)` passed happily while this was an
+      // uncaught throw, which is why it is not the assertion.
+      expect(result.status).toBe(3);
       expect(result.stderr).toContain(
         `you are not a recipient of ${original.id}; use send --to <agent>`,
       );
+      // The instruction is the FIRST thing on screen, not buried under frames.
+      expect(result.stderr.trimStart().startsWith('REFUSED:')).toBe(true);
+      // No stack trace: a trace reads as "the tool broke" rather than as a
+      // refusal. These fail if anyone reverts it to a thrown Error.
+      expect(result.stderr).not.toContain('AgentMailRefusal:');
+      expect(result.stderr).not.toContain('at reply');
+      expect(result.stderr).not.toMatch(/^\s+at /m);
       expect(counts(mailDir)).toEqual(before);
     } finally {
       fs.rmSync(mailDir, { recursive: true, force: true });
