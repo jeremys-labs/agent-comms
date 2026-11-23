@@ -22,6 +22,31 @@ const AGENT_MAIL_TYPES: readonly AgentMailType[] = [
 ];
 const AGENT_MAIL_PRIORITIES: readonly AgentMailPriority[] = ['low', 'normal', 'high'];
 
+/**
+ * A deliberate policy refusal, as opposed to a failure.
+ *
+ * The distinction is the whole point of the class. A refusal is a COMPLETED
+ * operation that said no: the caller asked for something the rules do not allow,
+ * the store did exactly what it should, and nothing is broken. A plain `Error`
+ * out of here reaches the CLI's top level as an uncaught exception -- a Node
+ * stack trace, exit 1, indistinguishable from a malformed command (isla found
+ * this shape on 2026-11-07 for the agent-time rule; `d7d16d9` reintroduced it
+ * for reply authorization).
+ *
+ * Carrying the distinction as a TYPE rather than as message text is deliberate:
+ * matching on the string would work today and break silently the first time
+ * someone rewords the refusal, which is exactly the edit a reviewer would wave
+ * through.
+ *
+ * The CLI maps this to its own exit code. Library callers can catch it by type.
+ */
+export class AgentMailRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AgentMailRefusal';
+  }
+}
+
 export interface AgentMailLinkInput {
   label: string;
   target: string;
@@ -395,7 +420,7 @@ export function createAgentMailStore(dbPath = resolveAgentMailDbPath()): AgentMa
       const original = selectMessage.get(input.messageId) as MessageRow | undefined;
       if (!original) throw new Error(`Message not found: ${input.messageId}`);
       if (input.actorAgent !== original.to_agent) {
-        throw new Error(
+        throw new AgentMailRefusal(
           `you are not a recipient of ${input.messageId}; use send --to <agent>`,
         );
       }
