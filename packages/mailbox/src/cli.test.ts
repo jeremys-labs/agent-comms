@@ -89,7 +89,23 @@ describe('agent-mail CLI reply authorization', () => {
     return spawnSync(
       process.execPath,
       ['--import', 'tsx', cliPath, ...args],
-      { encoding: 'utf8', env: { ...process.env, AGENT_MAIL_DIR: mailDir } },
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          AGENT_MAIL_DIR: mailDir,
+          // A CONTROL RUN MUST NOT REACH A LIVE DESTINATION. Without this, the helper
+          // inherits cli.ts's hardcoded default and any journalling send through it
+          // appends to SHARED/reports/deferral-guard.jsonl -- the live fleet report.
+          //
+          // It was safe only BY CONTENT, not by construction: this helper's bodies are
+          // the literal string 'body', which does not defer, so nothing journalled. The
+          // next test added here with a deferring body, or any fail-open on this path,
+          // would have written to the live file. isla cleaned 122 fixture rows out of
+          // that report on 2026-11-23 and this was its last open path.
+          DEFERRAL_GUARD_JOURNAL: path.join(mailDir, 'deferral-guard.jsonl'),
+        },
+      },
     );
   }
 
@@ -101,6 +117,40 @@ describe('agent-mail CLI reply authorization', () => {
     expect(result.status).toBe(0);
     return JSON.parse(result.stdout) as { id: string; correlationId: string };
   }
+
+  it('cli() journals to a per-test path, never the live fleet report', () => {
+    // isla's condition on the fix. Two assertions, because "it no longer pollutes" and
+    // "nothing journalled at all" look identical: the per-test journal must GROW, and the
+    // path the helper would otherwise have inherited must stay EMPTY.
+    //
+    // DELIBERATELY HERMETIC: my first version asserted the real
+    // SHARED/reports/deferral-guard.jsonl did not change size. That is RACY BY
+    // CONSTRUCTION -- other agents write that file continuously, and it grew 217 -> 228
+    // from real traffic while I was writing this test. An assertion about a live shared
+    // file is a flake waiting to be blamed on the code under test. So the inherited
+    // default is redirected to a sentinel this test owns, and the claim becomes exactly
+    // "the helper overrides what it inherits".
+    const sizeOf = (p: string) => (fs.existsSync(p) ? fs.statSync(p).size : 0);
+    const mailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journal-isolation-'));
+    const perTest = path.join(mailDir, 'deferral-guard.jsonl');
+    const sentinel = path.join(mailDir, 'inherited-sentinel.jsonl');
+    const previous = process.env.DEFERRAL_GUARD_JOURNAL;
+    process.env.DEFERRAL_GUARD_JOURNAL = sentinel;
+
+    // A body that DEFERS, so the guard journals a block event. The helper's own sends use
+    // a non-deferring body, which is why this hazard was invisible.
+    const result = cli(mailDir, [
+      'send', '--from', 'marcus', '--to', 'isla', '--type', 'note',
+      '--subject', 's', '--body', 'I will ship the fix tomorrow.',
+    ]);
+
+    if (previous === undefined) delete process.env.DEFERRAL_GUARD_JOURNAL;
+    else process.env.DEFERRAL_GUARD_JOURNAL = previous;
+
+    expect(result.status).not.toBe(0);
+    expect(sizeOf(perTest)).toBeGreaterThan(0);
+    expect(sizeOf(sentinel)).toBe(0);
+  });
 
   function counts(mailDir: string) {
     const db = new Database(path.join(mailDir, 'agent_mail.db'), { readonly: true });
