@@ -100,16 +100,48 @@ function refuse(message: string, code: number): never {
  */
 const DEFERRAL_CHECKER =
   process.env.DEFERRAL_CHECK ?? '/Volumes/Repo-Drive/agents/SHARED/hooks/deferral_check.py';
-const DEFERRAL_JOURNAL =
-  process.env.DEFERRAL_GUARD_JOURNAL ?? '/Volumes/Repo-Drive/agents/SHARED/reports/deferral-guard.jsonl';
+// JOURNAL ROUTING -- a MIRROR of deferral_check.resolve_journal, and the duplication is
+// unavoidable: this file is TypeScript and cannot import the Python resolver. Parity is
+// therefore asserted by a test that reads the SAME shared case table the Python suite
+// reads (SHARED/hooks/journal-routing-cases.json), because a hand-copied arm list across
+// two languages drifts exactly the way the four inlined send regexes in
+// guard-message-body.py did -- and that drift is only discovered when it matters.
+//
+// hercule's rule (msg_6961be83): divert ONLY on an explicit positive marker; ANY
+// ambiguity goes to the LIVE report. A stray probe row is noise you can filter; a dropped
+// block is evidence that never existed. Pick the error you can see.
+//
+// BLANK IS ABSENT, and this is where the two implementations DISAGREED before this change:
+// `process.env.X ?? default` falls back only on null/undefined, so an empty or whitespace
+// DEFERRAL_GUARD_JOURNAL was used AS THE PATH -- and path.dirname('') is '.', which writes
+// deferral-guard.jsonl into whatever directory the CLI happened to run in. Python treats
+// blank as absent. The shared table has that case.
+function reportsDir(): string {
+  return (process.env.DEFERRAL_GUARD_REPORTS_DIR ?? '').trim()
+    || '/Volumes/Repo-Drive/agents/SHARED/reports';
+}
+
+export function resolveJournal(): string {
+  const explicit = (process.env.DEFERRAL_GUARD_JOURNAL ?? '').trim();
+  if (explicit) return explicit;
+  const probe = (process.env.DEFERRAL_GUARD_PROBE ?? '').trim().toLowerCase();
+  if (probe && !['0', 'false', 'no'].includes(probe)) {
+    return `${reportsDir()}/deferral-guard.test-fixtures.jsonl`;
+  }
+  return `${reportsDir()}/deferral-guard.jsonl`;
+}
 
 function journalDeferralEvent(kind: string, fields: Record<string, unknown>): void {
   // Written here rather than through the Python module for one reason: when the
   // interpreter is what failed, Python cannot be the thing that records it.
+  // Resolved PER EVENT, not at module load: a harness that sets the marker after importing
+  // must still be diverted, and resolving once at load is how it writes where it did not
+  // intend to.
+  const target = resolveJournal();
   try {
-    fs.mkdirSync(path.dirname(DEFERRAL_JOURNAL), { recursive: true });
+    fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.appendFileSync(
-      DEFERRAL_JOURNAL,
+      target,
       `${JSON.stringify({ ts: Date.now() / 1000, kind, source: 'agent-mail-cli', ...fields })}\n`,
     );
   } catch {
@@ -130,7 +162,7 @@ function enforceAgentTimeRule(body: string, options: Map<string, string | boolea
     journalDeferralEvent('fail-open', { reason });
     process.stderr.write(
       `agent-time rule NOT CHECKED (${reason}). Sending anyway; the event is in ` +
-        `${DEFERRAL_JOURNAL}.\n`,
+        `${resolveJournal()}.\n`,
     );
     return;
   }
