@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { resolveJournal } from './cli.js';
 import { describe, expect, it } from 'vitest';
 
 const cliPath = fileURLToPath(new URL('./cli.ts', import.meta.url));
@@ -82,6 +83,63 @@ describe('agent-mail CLI handoffs', () => {
       fs.rmSync(mailDir, { recursive: true, force: true });
     }
   });
+});
+
+describe('journal routing (shared case table)', () => {
+  // THE SAME TABLE THE PYTHON SUITE READS. isla's requirement on dc-20261123-006: a
+  // hand-copied arm list across two languages drifts exactly the way the four inlined send
+  // regexes in guard-message-body.py did, and that drift is only found when it matters. So
+  // neither side carries its own list -- both read
+  // SHARED/hooks/journal-routing-cases.json.
+  //
+  // hercule's rule (msg_6961be83): divert ONLY on an explicit positive marker; ANY
+  // ambiguity goes to the LIVE report. A dropped block is evidence that never existed.
+  const CASES_FILE =
+    '/Volumes/Repo-Drive/agents/SHARED/hooks/journal-routing-cases.json';
+
+  type Case = { name: string; env: Record<string, string>; expect: string };
+
+  const table = JSON.parse(fs.readFileSync(CASES_FILE, 'utf8')) as { cases: Case[] };
+
+  // A temp reports dir, so a routing mistake in this suite can never reach the real
+  // files. The Python suite does the same; the table's {REPORTS} placeholder is what lets
+  // one table serve both.
+  const REPORTS = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-journal-routing-'));
+
+  function expected(c: Case): string {
+    const sub = (v: string) => v.replace(/\{REPORTS\}/g, REPORTS);
+    if (c.expect === 'live') return `${REPORTS}/deferral-guard.jsonl`;
+    if (c.expect === 'fixtures') return `${REPORTS}/deferral-guard.test-fixtures.jsonl`;
+    return sub(c.expect);
+  }
+
+  it('the shared table is non-empty and carries both verdicts', () => {
+    // Without this, a table that failed to load would make every case below vacuous and
+    // the suite would pass by running nothing.
+    expect(table.cases.length).toBeGreaterThan(5);
+    expect(table.cases.some((c) => c.expect === 'live')).toBe(true);
+    expect(table.cases.some((c) => c.expect === 'fixtures')).toBe(true);
+  });
+
+  it.each(table.cases.map((c) => [c.name, c] as [string, Case]))(
+    'resolves: %s',
+    (_name, c) => {
+      const saved = { ...process.env };
+      try {
+        for (const k of ['DEFERRAL_GUARD_JOURNAL', 'DEFERRAL_GUARD_PROBE']) {
+          delete process.env[k];
+        }
+        process.env.DEFERRAL_GUARD_REPORTS_DIR = REPORTS;
+        for (const [k, v] of Object.entries(c.env)) {
+          process.env[k] = v.replace(/\{REPORTS\}/g, REPORTS);
+        }
+        expect(resolveJournal()).toBe(expected(c));
+      } finally {
+        for (const k of Object.keys(process.env)) delete process.env[k];
+        Object.assign(process.env, saved);
+      }
+    },
+  );
 });
 
 describe('agent-mail CLI reply authorization', () => {
